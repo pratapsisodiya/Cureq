@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { apiRequest } from '../../../src/utils/api';
+import { apiRequest, API_URL } from '../../../src/utils/api';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, 
   LineChart, Line, AreaChart, Area
@@ -60,7 +60,7 @@ export default function AnalyticsDashboard() {
 
   const handleDownloadCSV = () => {
     if (!clinicId) return;
-    window.location.href = `http://localhost:5000/api/analytics/${clinicId}/report`;
+    window.location.href = `${API_URL}/analytics/${clinicId}/report`;
   };
 
   if (loading) {

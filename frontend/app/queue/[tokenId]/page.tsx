@@ -1,7 +1,7 @@
 'use client';
 
 import React, { use, useState, useEffect } from 'react';
-import { apiRequest } from '../../../src/utils/api';
+import { apiRequest, BACKEND_URL } from '../../../src/utils/api';
 import io from 'socket.io-client';
 import { 
   Activity, Clock, Users, ArrowRightLeft, FileText, 
@@ -59,7 +59,7 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
   useEffect(() => {
     if (!tokenId) return;
     
-    const socket = io('http://localhost:5000');
+    const socket = io(BACKEND_URL);
     
     socket.on('connect', () => {
       socket.emit('join:token', tokenId);

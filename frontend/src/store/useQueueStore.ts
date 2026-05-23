@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { io, Socket } from 'socket.io-client';
-import { apiRequest } from '../utils/api';
+import { apiRequest, BACKEND_URL } from '../utils/api';
 
 export interface TokenItem {
   id: string;
@@ -74,7 +74,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     const currentSocket = get().socket;
     if (currentSocket) return; // Already initialized
 
-    const socketUrl = 'http://localhost:5000';
+    const socketUrl = BACKEND_URL;
     const newSocket = io(socketUrl);
 
     newSocket.on('connect', () => {

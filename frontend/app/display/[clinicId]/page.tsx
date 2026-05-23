@@ -1,7 +1,7 @@
 'use client';
 
 import React, { use, useState, useEffect } from 'react';
-import { apiRequest } from '../../../src/utils/api';
+import { apiRequest, BACKEND_URL } from '../../../src/utils/api';
 import io from 'socket.io-client';
 import { Tv, Activity, Clock, Volume2, Calendar } from 'lucide-react';
 
@@ -62,7 +62,7 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
   useEffect(() => {
     if (!branchId) return;
 
-    const socket = io('http://localhost:5000');
+    const socket = io(BACKEND_URL);
 
     socket.on('connect', () => {
       socket.emit('join:branch', branchId);
