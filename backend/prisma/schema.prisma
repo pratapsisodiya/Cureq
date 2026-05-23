@@ -22,6 +22,11 @@ enum TokenStatus {
   NO_SHOW
 }
 
+enum SeatStatus {
+  SEATED
+  WAITING_OUTSIDE
+}
+
 enum TokenType {
   GENERAL
   PRIORITY
@@ -91,6 +96,7 @@ model Branch {
   name        String
   address     String
   phone       String
+  waitingSeats Int             @default(10)
   clinicId    String
   clinic      Clinic           @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   schedules   DoctorSchedule[]
@@ -165,6 +171,8 @@ model Token {
   appointmentId  String?     @unique
   appointment    Appointment? @relation("TokenAppointment", fields: [appointmentId], references: [id], onDelete: SetNull)
   
+  seatStatus     SeatStatus  @default(SEATED)
+
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 }

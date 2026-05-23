@@ -18,8 +18,10 @@ const SPECIALITIES_LIST = [
 export default function ReceptionDashboard() {
   const { 
     activeQueue, servedToday, skippedToday, noShowToday,
-    fetchQueue, initSocket, disconnectSocket, reorderQueue, recallToken 
+    fetchQueue, initSocket, disconnectSocket, reorderQueue, recallToken, updateSeatsCapacity 
   } = useQueueStore();
+
+  const [waitingSeats, setWaitingSeats] = useState(10);
 
   const [clinicId, setClinicId] = useState('');
   const [branchId, setBranchId] = useState('');
@@ -80,7 +82,11 @@ export default function ReceptionDashboard() {
   const fetchDoctors = async (cId: string) => {
     try {
       const res = await apiRequest(`/clinics/${cId}`);
-      const schedules = res.clinic.branches[0]?.schedules || [];
+      const branch = res.clinic.branches[0];
+      if (branch) {
+        setWaitingSeats(branch.waitingSeats || 10);
+      }
+      const schedules = branch?.schedules || [];
       const docs: any[] = [];
       schedules.forEach((s: any) => {
         if (!docs.some(d => d.id === s.doctor.id)) {
@@ -93,6 +99,16 @@ export default function ReceptionDashboard() {
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleUpdateSeats = async (newCapacity: number) => {
+    if (newCapacity < 1) return;
+    try {
+      await updateSeatsCapacity(clinicId, branchId, newCapacity);
+      setWaitingSeats(newCapacity);
+    } catch (err) {
+      console.error('Failed to update waiting room seats', err);
     }
   };
 
@@ -527,10 +543,128 @@ export default function ReceptionDashboard() {
                       </div>
                       <textarea placeholder="Optional notes" rows={2} className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-inner resize-none" value={chiefComplaint} onChange={(e) => setChiefComplaint(e.target.value)} />
                     </div>
+
+                    {/* Capacity Indicator Helper */}
+                    {(() => {
+                      const currentSeatedCount = activeQueue.filter(t => t.status === 'WAITING' && t.seatStatus === 'SEATED').length;
+                      const hasSeat = currentSeatedCount < waitingSeats;
+                      return (
+                        <div className={`p-2.5 rounded border text-xs font-semibold flex items-center justify-between ${
+                          hasSeat 
+                            ? 'bg-[#e6f3f4]/40 border-[#01696f]/20 text-[#01696f]' 
+                            : 'bg-amber-50 border-amber-200 text-amber-800'
+                        }`}>
+                          <span>Next Token Seat:</span>
+                          <span className="font-bold flex items-center gap-1">
+                            <span className={`h-2.5 w-2.5 rounded-full ${hasSeat ? 'bg-[#01696f]' : 'bg-amber-500 animate-pulse'}`}></span>
+                            {hasSeat ? 'Physical Seat Available' : 'Virtual Queue (Wait Outside)'}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
                     <button type="submit" className="w-full py-2.5 bg-[#01696f] text-white text-sm font-bold rounded-md shadow-md hover:bg-[#005459] transition-colors cursor-pointer flex items-center justify-center gap-2">
                       <Printer className="h-4 w-4" /> Issue Token
                     </button>
                   </form>
+                </div>
+              </div>
+
+              {/* Waiting Room Seats Manager */}
+              <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden h-fit">
+                <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa] flex items-center justify-between">
+                  <h2 className="text-sm font-bold text-[#1a202c] flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-[#01696f]" /> Waiting Room Seats
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => handleUpdateSeats(waitingSeats - 1)}
+                      disabled={waitingSeats <= 1}
+                      className="w-6 h-6 border border-[#e9e9e7] rounded bg-white hover:bg-[#f4f4f3] disabled:opacity-50 font-bold text-xs text-[#1a202c] cursor-pointer shadow-xs flex items-center justify-center"
+                      title="Decrease seats capacity"
+                    >
+                      -
+                    </button>
+                    <span className="text-xs font-bold text-[#1a202c]">{waitingSeats} Seats</span>
+                    <button 
+                      onClick={() => handleUpdateSeats(waitingSeats + 1)}
+                      className="w-6 h-6 border border-[#e9e9e7] rounded bg-white hover:bg-[#f4f4f3] font-bold text-xs text-[#1a202c] cursor-pointer shadow-xs flex items-center justify-center"
+                      title="Increase seats capacity"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+                <div className="p-6">
+                  {/* Grid of physical seats */}
+                  <div className="grid grid-cols-5 gap-3">
+                    {Array.from({ length: waitingSeats }).map((_, idx) => {
+                      const seatedPatients = activeQueue.filter(t => t.status === 'WAITING' && t.seatStatus === 'SEATED');
+                      const isOccupied = idx < seatedPatients.length;
+                      const patient = isOccupied ? seatedPatients[idx] : null;
+
+                      return (
+                        <div 
+                          key={idx} 
+                          className={`aspect-square rounded-lg border flex flex-col items-center justify-center p-2 relative group transition-all duration-200 ${
+                            isOccupied 
+                              ? 'bg-[#e6f3f4] border-[#01696f]/40 text-[#01696f] shadow-xs' 
+                              : 'bg-[#fbfbfa] border-[#e9e9e7] text-gray-300'
+                          }`}
+                        >
+                          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M7 10V17M17 10V17M5 20H19M5 17H19M7 5H17M7 10H17" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                          <span className="text-[9px] mt-1 font-bold">
+                            {isOccupied && patient ? patient.tokenNo : `Seat ${idx + 1}`}
+                          </span>
+                          
+                          {/* Tooltip on hover */}
+                          {isOccupied && patient && (
+                            <div className="absolute bottom-full mb-2 hidden group-hover:block z-30 bg-gray-900 text-white text-[10px] p-2 rounded shadow-md w-32 text-center left-1/2 -translate-x-1/2">
+                              <p className="font-bold">{patient.patientName}</p>
+                              <p className="text-[8px] text-gray-300">Wait: {patient.estimatedWait}m</p>
+                              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Virtual Queue / Waiting Outside stats */}
+                  {(() => {
+                    const outsidePatients = activeQueue.filter(t => t.status === 'WAITING' && t.seatStatus === 'WAITING_OUTSIDE');
+                    const seatedCount = activeQueue.filter(t => t.status === 'WAITING' && t.seatStatus === 'SEATED').length;
+                    return (
+                      <div className="mt-6 pt-4 border-t border-[#e9e9e7]">
+                        <div className="flex justify-between text-xs font-semibold text-[#64748b] mb-2">
+                          <span>Seated Patients: {seatedCount}/{waitingSeats}</span>
+                          <span>Waiting Outside: {outsidePatients.length}</span>
+                        </div>
+                        {outsidePatients.length > 0 ? (
+                          <div className="space-y-2 mt-2">
+                            <h4 className="text-[10px] font-bold text-amber-600 uppercase tracking-wider flex items-center gap-1">
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 inline-block animate-pulse"></span> Virtual Waitlist (Waiting Outside)
+                            </h4>
+                            <div className="max-h-24 overflow-y-auto space-y-1.5 pr-1">
+                              {outsidePatients.map(patient => (
+                                <div key={patient.id} className="flex justify-between items-center text-[11px] p-2 bg-amber-50/50 border border-amber-100 rounded-md">
+                                  <div>
+                                    <span className="font-bold text-[#1a202c]">{patient.patientName}</span>
+                                    <span className="text-[9px] text-gray-500 ml-1">({patient.tokenNo})</span>
+                                  </div>
+                                  <span className="font-bold text-amber-700">{patient.estimatedWait}m wait</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-gray-500 italic mt-1">No patients waiting outside. Everyone is seated.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -557,6 +691,7 @@ export default function ReceptionDashboard() {
                           <th className="px-5 py-3">Patient</th>
                           <th className="px-5 py-3">Urgency</th>
                           <th className="px-5 py-3">ETA</th>
+                          <th className="px-5 py-3">Seat</th>
                           <th className="px-5 py-3">Status</th>
                           <th className="px-5 py-3 text-right">Actions</th>
                         </tr>
@@ -584,6 +719,17 @@ export default function ReceptionDashboard() {
                             <td className="px-5 py-4">
                               <span className={`px-2 py-1 text-[10px] font-bold rounded border ${getUrgencyBadge(token.estimatedWait)}`}>
                                 {token.status === 'IN_CONSULTATION' ? 'Serving' : `${token.estimatedWait}m`}
+                              </span>
+                            </td>
+                            <td className="px-5 py-4">
+                              <span className={`px-2 py-1 text-[9px] uppercase font-bold rounded shadow-xs border ${
+                                token.status === 'IN_CONSULTATION' 
+                                  ? 'bg-blue-50 text-blue-700 border-blue-200' 
+                                  : token.seatStatus === 'SEATED' 
+                                    ? 'bg-[#e6f3f4] text-[#01696f] border-[#01696f]/20' 
+                                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                              }`}>
+                                {token.status === 'IN_CONSULTATION' ? 'Chamber' : token.seatStatus.replace('_', ' ')}
                               </span>
                             </td>
                             <td className="px-5 py-4">

@@ -37,6 +37,13 @@ A dedicated widescreen layout for clinic monitors.
 - **Voice Announcements:** Integrated speech synthesis (TTS) to call out token numbers.
 - **Live Ticker:** Customizable announcement bar for clinic notices.
 
+### 🪑 Dynamic Waiting Room Seats & Line Automation
+Prevents waiting room overcrowding by treating physical seats as a finite managed resource.
+- **Seat Capacity Limits:** Clinic receptionists can dynamically adjust (increase/decrease) the physical seats count in the waiting room in real-time.
+- **Automated Queue Routing:** When seats are full, new check-ins are placed in a virtual queue ("Waiting Outside") and notified.
+- **Auto-Promotion Engine:** When seats vacate (e.g., when patients are served, skipped, or enter consultation), the system automatically promotes "Waiting Outside" patients to "Seated" status and alerts them (SMS/WhatsApp logs) to proceed inside.
+- **Visual Grid Display:** Reception console features a real-time color-coded seating grid showing occupied (teal) and vacant (gray) seats with interactive tooltips.
+
 ### 👨‍⚕️ Doctor Console
 A high-productivity dashboard for healthcare providers.
 - **One-Click Calling:** Move the queue forward with a single tap.

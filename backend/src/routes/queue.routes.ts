@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { PrismaClient, TokenStatus, TokenType, VisitType } from '@prisma/client';
+import { PrismaClient, TokenStatus, TokenType, VisitType, SeatStatus } from '@prisma/client';
 import { queueCache } from '../services/cache.service';
 import { aiService } from '../services/ai.service';
 import { broadcastQueueUpdate, broadcastTokenCalled, broadcastTokenUpdate } from '../sockets/queue.socket';
@@ -100,6 +100,7 @@ async function recalculateQueueETAs(branchId: string, doctorId: string, io: any)
       estimatedWait: t.estimatedWait,
       checkInTime: t.checkInTime.toISOString(),
       queueOrder: t.queueOrder,
+      seatStatus: t.seatStatus,
     }));
 
     await queueCache.saveQueue(branchId, doctorId, cachedTokens);
@@ -109,6 +110,107 @@ async function recalculateQueueETAs(branchId: string, doctorId: string, io: any)
     }
   } catch (err) {
     console.error('Error recalculating queue ETAs:', err);
+  }
+}
+
+/**
+ * Promote waiting-outside patients to seated status if seats are available
+ */
+export async function promoteWaitingOutsidePatients(branchId: string, io: any) {
+  try {
+    const branch = await prisma.branch.findUnique({
+      where: { id: branchId },
+      include: { clinic: true },
+    });
+    if (!branch) return;
+
+    // Count currently SEATED patients
+    const currentSeatedCount = await prisma.token.count({
+      where: {
+        branchId,
+        status: 'WAITING',
+        seatStatus: 'SEATED',
+      },
+    });
+
+    const freeSeats = branch.waitingSeats - currentSeatedCount;
+    if (freeSeats <= 0) return;
+
+    // Find waiting outside patients ordered by queue order
+    const outsideTokens = await prisma.token.findMany({
+      where: {
+        branchId,
+        status: 'WAITING',
+        seatStatus: 'WAITING_OUTSIDE',
+      },
+      orderBy: { queueOrder: 'asc' },
+      take: freeSeats,
+      include: { doctor: { include: { user: true } } },
+    });
+
+    if (outsideTokens.length === 0) return;
+
+    const plan = branch.clinic.plan;
+    const channel = plan === 'FREE' || plan === 'STARTER' ? 'SMS' : 'WHATSAPP';
+
+    for (const token of outsideTokens) {
+      // Update status to SEATED in DB
+      await prisma.token.update({
+        where: { id: token.id },
+        data: { seatStatus: 'SEATED' },
+      });
+
+      // Log/Send notification
+      await sendNotification(
+        branchId,
+        token.patientPhone,
+        `A seat is now available in the waiting room! Token: ${token.tokenNo}. Doctor: ${token.doctor.user.name}. Please proceed inside.`,
+        channel
+      );
+
+      // Notify individual patient tracker
+      if (io) {
+        broadcastTokenUpdate(io, token.id, {
+          seatStatus: 'SEATED',
+        });
+      }
+    }
+
+    // Refresh active queue cache for all doctors who had promotions
+    const doctorIds = Array.from(new Set(outsideTokens.map(t => t.doctorId)));
+    for (const dId of doctorIds) {
+      const currentActive = await prisma.token.findMany({
+        where: {
+          branchId,
+          doctorId: dId,
+          status: { in: ['WAITING', 'IN_CONSULTATION'] },
+        },
+        orderBy: { queueOrder: 'asc' },
+      });
+
+      const cachedTokens = currentActive.map(t => ({
+        id: t.id,
+        tokenNo: t.tokenNo,
+        patientName: t.patientName,
+        patientPhone: t.patientPhone,
+        type: t.type,
+        visitType: t.visitType,
+        status: t.status,
+        chiefComplaint: t.chiefComplaint,
+        estimatedWait: t.estimatedWait,
+        checkInTime: t.checkInTime.toISOString(),
+        queueOrder: t.queueOrder,
+        seatStatus: t.seatStatus,
+      }));
+
+      await queueCache.saveQueue(branchId, dId, cachedTokens);
+
+      if (io) {
+        broadcastQueueUpdate(io, branchId, dId, cachedTokens);
+      }
+    }
+  } catch (err) {
+    console.error('Error promoting waiting outside patients:', err);
   }
 }
 
@@ -170,11 +272,22 @@ router.post('/:branchId/token', async (req, res) => {
     const queueOrder = doctorTokenCountToday + 1;
     const tokenNo = `${prefix}-${queueOrder.toString().padStart(3, '0')}`;
 
-    // 3. Estimate wait time
+    // 3. Estimate wait time and determine seating status
     const waitingCount = await prisma.token.count({
       where: { branchId, doctorId, status: 'WAITING' },
     });
     const eta = await aiService.getEstimatedWaitTime(branchId, doctorId, waitingCount);
+
+    const currentSeatedCount = await prisma.token.count({
+      where: { branchId, status: 'WAITING', seatStatus: 'SEATED' },
+    });
+
+    const seatStatus = currentSeatedCount < branch.waitingSeats ? SeatStatus.SEATED : SeatStatus.WAITING_OUTSIDE;
+
+    // Find the patient user by phone to link patientId
+    const patientUser = await prisma.user.findFirst({
+      where: { phone: patientPhone, role: 'PATIENT' }
+    });
 
     // 4. Create Token in DB
     const token = await prisma.token.create({
@@ -188,9 +301,11 @@ router.post('/:branchId/token', async (req, res) => {
         estimatedWait: eta,
         patientPhone,
         patientName,
+        patientId: patientUser ? patientUser.id : null,
         doctorId,
         branchId,
         appointmentId: appointmentId || null,
+        seatStatus,
       },
     });
 
@@ -215,6 +330,7 @@ router.post('/:branchId/token', async (req, res) => {
       estimatedWait: token.estimatedWait,
       checkInTime: token.checkInTime.toISOString(),
       queueOrder: token.queueOrder,
+      seatStatus: token.seatStatus,
     };
 
     const io = req.app.get('io');
@@ -229,10 +345,14 @@ router.post('/:branchId/token', async (req, res) => {
     const channel = plan === 'FREE' || plan === 'STARTER' ? 'SMS' : 'WHATSAPP';
     const patientsAhead = waitingCount;
     
+    const notificationMsg = seatStatus === SeatStatus.SEATED
+      ? `You joined the queue! Token: ${tokenNo}. Doctor: ${doctorProfile.user.name}. Please proceed to the waiting area. A seat is allocated. ETA: ~${eta} mins.`
+      : `You joined the queue! Token: ${tokenNo}. Doctor: ${doctorProfile.user.name}. The waiting room is full. You are in the virtual queue. We will alert you when a seat is free. ETA: ~${eta} mins.`;
+
     await sendNotification(
       branchId,
       patientPhone,
-      `You joined the queue! Token: ${tokenNo}. Doctor: ${doctorProfile.user.name}. ${patientsAhead} patients ahead. ETA: ~${eta} mins.`,
+      notificationMsg,
       channel
     );
 
@@ -282,6 +402,7 @@ router.get('/:branchId/live', async (req, res) => {
         estimatedWait: t.estimatedWait,
         checkInTime: t.checkInTime.toISOString(),
         queueOrder: t.queueOrder,
+        seatStatus: t.seatStatus,
       }));
 
       await queueCache.saveQueue(branchId, doctorId as string, cached);
@@ -378,6 +499,9 @@ router.post('/:branchId/next', async (req, res) => {
       data: { status: 'IN_CONSULTATION', startTime: new Date() },
     });
 
+    // 3.5 Promote waiting outside patients since a seat just opened up
+    await promoteWaitingOutsidePatients(branchId, io);
+
     // 4. Recalculate other wait times, refresh cache and broadcast updates
     await recalculateQueueETAs(branchId, doctorId, io);
 
@@ -433,6 +557,7 @@ router.post('/:branchId/skip', async (req, res) => {
     });
 
     const io = req.app.get('io');
+    await promoteWaitingOutsidePatients(branchId, io);
     await recalculateQueueETAs(branchId, doctorId, io);
     res.json({ message: 'Patient skipped successfully.' });
   } catch (err) {
@@ -474,6 +599,7 @@ router.post('/:branchId/noshow', async (req, res) => {
     });
 
     const io = req.app.get('io');
+    await promoteWaitingOutsidePatients(branchId, io);
     await recalculateQueueETAs(branchId, doctorId, io);
     res.json({ message: 'Patient marked as No-Show.' });
   } catch (err) {

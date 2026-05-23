@@ -12,6 +12,7 @@ export interface ActiveQueueToken {
   estimatedWait: number;
   checkInTime: string;
   queueOrder: number;
+  seatStatus: string;
 }
 
 export class QueueCacheService {

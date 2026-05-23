@@ -6,6 +6,37 @@ const router = Router();
 const prisma = new PrismaClient();
 
 /**
+ * @route   GET /api/patients
+ * @desc    Get all registered patients
+ */
+router.get('/', authenticateToken, async (req, res) => {
+  try {
+    const patients = await prisma.user.findMany({
+      where: {
+        role: 'PATIENT',
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        age: true,
+        gender: true,
+        bloodGroup: true,
+        createdAt: true,
+      },
+      orderBy: {
+        name: 'asc',
+      },
+    });
+
+    res.json({ patients });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error retrieving patients list.' });
+  }
+});
+
+/**
  * @route   GET /api/patients/:phone
  * @desc    Receptionist patient search by phone (lookup for fast walk-in check-in)
  */

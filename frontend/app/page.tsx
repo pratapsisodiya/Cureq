@@ -17,12 +17,6 @@ export default function LandingPage() {
             <span className="font-serif text-2xl font-bold tracking-tight text-[#01696f]">CureQ</span>
           </div>
           <nav className="flex items-center gap-6">
-            <Link href="/onboarding" className="text-sm font-medium text-[#64748b] hover:text-[#01696f] transition-colors">
-              Onboard Clinic
-            </Link>
-            <Link href="/dashboard/reception" className="text-sm font-medium text-[#64748b] hover:text-[#01696f] transition-colors">
-              Reception Desk
-            </Link>
             <Link href="/dashboard/doctor" className="text-sm font-medium text-white bg-[#01696f] px-3.5 py-1.5 rounded-[4px] hover:bg-[#005459] transition-all">
               Doctor Console
             </Link>

@@ -14,6 +14,7 @@ export interface TokenItem {
   estimatedWait: number;
   checkInTime: string;
   queueOrder: number;
+  seatStatus: 'SEATED' | 'WAITING_OUTSIDE';
 }
 
 interface QueueState {
@@ -39,6 +40,7 @@ interface QueueState {
   recallToken: (branchId: string, tokenNo: string, doctorName: string) => Promise<void>;
   reorderQueue: (branchId: string, doctorId: string, tokenIds: string[]) => Promise<void>;
   addToken: (branchId: string, payload: any) => Promise<void>;
+  updateSeatsCapacity: (clinicId: string, branchId: string, seats: number) => Promise<void>;
 }
 
 export const useQueueStore = create<QueueState>((set, get) => ({
@@ -185,6 +187,18 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       await apiRequest(`/queues/${branchId}/token`, {
         method: 'POST',
         body: JSON.stringify(payload),
+      });
+    } catch (err: any) {
+      set({ error: err.message });
+      throw err;
+    }
+  },
+  
+  updateSeatsCapacity: async (clinicId, branchId, seats) => {
+    try {
+      await apiRequest(`/clinics/${clinicId}/branches/${branchId}/seats`, {
+        method: 'PUT',
+        body: JSON.stringify({ waitingSeats: seats }),
       });
     } catch (err: any) {
       set({ error: err.message });

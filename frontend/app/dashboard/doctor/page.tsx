@@ -7,8 +7,14 @@ import VoiceDictation from '../../../src/components/VoiceDictation';
 import { 
   Play, SkipForward, AlertCircle, Save, CheckCircle2,
   Clock, ShieldAlert, FileText, ChevronRight, Activity,
-  LayoutDashboard, Calendar, Users, FileBarChart, Bell, Search, Plus, UserPlus, X, User, Phone
+  LayoutDashboard, Calendar, Users, FileBarChart, Bell, Search, Plus, UserPlus, X, User, Phone,
+  ArrowRight, ArrowLeft, Trash, Tv, Settings, LogOut
 } from 'lucide-react';
+
+const SPECIALITIES_LIST = [
+  'General Physician', 'Dentist', 'ENT Specialist', 'Dermatologist',
+  'Ophthalmologist', 'Gynecologist', 'Orthopedic Surgeon', 'Pediatrician'
+];
 
 export default function DoctorConsole() {
   const { 
@@ -21,6 +27,23 @@ export default function DoctorConsole() {
   const [doctorId, setDoctorId] = useState('');
   const [doctorName, setDoctorName] = useState('Doctor');
   const [speciality, setSpeciality] = useState('');
+
+  const [doctorsList, setDoctorsList] = useState<any[]>([]);
+
+  // === ONBOARDING STATE ===
+  const [isOnboarding, setIsOnboarding] = useState(false);
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [onboardError, setOnboardError] = useState('');
+  const [adminName, setAdminName] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminPhone, setAdminPhone] = useState('');
+  const [clinicName, setClinicName] = useState('');
+  const [selectedSpecialities, setSelectedSpecialities] = useState<string[]>([]);
+  const [doctors, setDoctors] = useState([
+    { name: '', email: '', password: 'DoctorCureQ123!', phone: '', speciality: '', schedules: [{ dayOfWeek: '1', startTime: '09:00', endTime: '17:00', slotDuration: '15', maxPatients: '30', bufferTime: '5' }] }
+  ]);
   
   // UI States
   const [activeTab, setActiveTab] = useState('Dashboard');
@@ -36,6 +59,27 @@ export default function DoctorConsole() {
   const [newComplaint, setNewComplaint] = useState('');
   const [isAddingToken, setIsAddingToken] = useState(false);
 
+  // Booked Appointments State
+  const [appointmentsList, setAppointmentsList] = useState<any[]>([]);
+  const [isCheckingIn, setIsCheckingIn] = useState<string | null>(null);
+
+  // Patient Database State
+  const [patientsList, setPatientsList] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Register Patient Form State
+  const [addPatientName, setAddPatientName] = useState('');
+  const [addPatientPhone, setAddPatientPhone] = useState('');
+  const [addPatientAge, setAddPatientAge] = useState('');
+  const [addPatientGender, setAddPatientGender] = useState('Male');
+  const [isRegisteringPatient, setIsRegisteringPatient] = useState(false);
+
+  // Medical History State
+  const [selectedPatientHistory, setSelectedPatientHistory] = useState<any[]>([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [historyPatientName, setHistoryPatientName] = useState('');
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
   // Local consult states
   const [consultNotes, setConsultNotes] = useState('');
   const [isSavingNotes, setIsSavingNotes] = useState(false);
@@ -49,70 +93,217 @@ export default function DoctorConsole() {
     setTodayStr(new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }));
   }, []);
 
-  // 1. Check/Seed sandbox context
+  // 1. Check configuration
   useEffect(() => {
     async function loadDoctorContext() {
       let savedClinicId = localStorage.getItem('cureq_clinic_id') || '';
       let savedBranchId = localStorage.getItem('cureq_branch_id') || '';
-      
+
       if (!savedClinicId || !savedBranchId) {
-        try {
-          const mockAdmin = await apiRequest('/auth/register', {
-            method: 'POST',
-            body: JSON.stringify({
-              name: 'Doctor Demo Admin',
-              email: `doctor_${Math.round(Math.random()*1000)}@cureq.com`,
-              password: 'DemoPassword123!',
-              phone: `90001${Math.round(Math.random()*90000)}`,
-            }),
-          });
-          localStorage.setItem('cureq_token', mockAdmin.token);
-
-          const mockOnboard = await apiRequest('/auth/onboard', {
-            method: 'POST',
-            body: JSON.stringify({
-              clinicName: 'CureQ Care Clinic',
-              speciality: 'Dermatologist',
-              doctors: [
-                { name: 'Dr. Priya Sharma', email: `priya_${Math.round(Math.random()*1000)}@cureq.com`, speciality: 'Dermatologist', phone: '9888866661' }
-              ]
-            }),
-          });
-
-          savedClinicId = mockOnboard.clinic.id;
-          savedBranchId = mockOnboard.branch.id;
-          localStorage.setItem('cureq_clinic_id', savedClinicId);
-          localStorage.setItem('cureq_branch_id', savedBranchId);
-        } catch (err) {
-          console.error(err);
-        }
-      }
-
-      setClinicId(savedClinicId);
-      setBranchId(savedBranchId);
-
-      try {
-        const res = await apiRequest('/auth/me');
-        if (res.user && res.user.doctorProfile) {
-          setDoctorId(res.user.doctorProfile.id);
-          setDoctorName(res.user.name);
-          setSpeciality(res.user.doctorProfile.speciality);
-        } else if (savedClinicId) {
-          const clinicRes = await apiRequest(`/clinics/${savedClinicId}`);
-          const sched = clinicRes.clinic.branches[0]?.schedules[0];
-          if (sched) {
-            setDoctorId(sched.doctor.id);
-            setDoctorName(sched.doctor.user.name);
-            setSpeciality(sched.doctor.speciality);
-          }
-        }
-      } catch (err) {
-        console.error(err);
+        setIsOnboarding(true);
+      } else {
+        setClinicId(savedClinicId);
+        setBranchId(savedBranchId);
+        fetchDoctors(savedClinicId);
       }
     }
-
     loadDoctorContext();
   }, []);
+
+  const fetchDoctors = async (cId: string) => {
+    try {
+      const res = await apiRequest(`/clinics/${cId}`);
+      const schedules = res.clinic.branches[0]?.schedules || [];
+      const docs: any[] = [];
+      schedules.forEach((s: any) => {
+        if (!docs.some(d => d.id === s.doctor.id)) {
+          docs.push(s.doctor);
+        }
+      });
+      setDoctorsList(docs);
+      if (docs.length > 0) {
+        const savedDocId = localStorage.getItem('cureq_active_doctor_id');
+        const defaultDoc = docs.find(d => d.id === savedDocId) || docs[0];
+        setDoctorId(defaultDoc.id);
+        setDoctorName(defaultDoc.user.name);
+        setSpeciality(defaultDoc.speciality);
+        localStorage.setItem('cureq_active_doctor_id', defaultDoc.id);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // === ONBOARDING HANDLERS ===
+  const handleOnboardSubmit = async () => {
+    setLoading(true);
+    setOnboardError('');
+    try {
+      const regResponse = await apiRequest('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ name: adminName, email: adminEmail, password: adminPassword, phone: adminPhone }),
+      });
+      localStorage.setItem('cureq_token', regResponse.token);
+      localStorage.setItem('cureq_role', 'CLINIC_ADMIN');
+
+      const onboardResponse = await apiRequest('/auth/onboard', {
+        method: 'POST',
+        body: JSON.stringify({ clinicName, speciality: selectedSpecialities.join(', '), doctors }),
+      });
+
+      const newClinicId = onboardResponse.clinic.id;
+      const newBranchId = onboardResponse.branch.id;
+      
+      localStorage.setItem('cureq_clinic_id', newClinicId);
+      localStorage.setItem('cureq_branch_id', newBranchId);
+
+      setClinicId(newClinicId);
+      setBranchId(newBranchId);
+      setIsOnboarding(false);
+      fetchDoctors(newClinicId);
+    } catch (err: any) {
+      setOnboardError(err.message || 'Onboarding failed.');
+      setStep(1);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDoctorChange = (index: number, field: string, value: string) => {
+    const updated = [...doctors];
+    updated[index] = { ...updated[index], [field]: value };
+    setDoctors(updated);
+  };
+
+  const handleResetClinic = () => {
+    if (confirm('Are you sure you want to reset this sandbox? This will clear local configuration.')) {
+      localStorage.removeItem('cureq_clinic_id');
+      localStorage.removeItem('cureq_branch_id');
+      localStorage.removeItem('cureq_token');
+      localStorage.removeItem('cureq_role');
+      localStorage.removeItem('cureq_active_doctor_id');
+      window.location.reload();
+    }
+  };
+
+  const fetchAppointments = async () => {
+    if (!branchId || !clinicId) return;
+    try {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const dateStr = `${yyyy}-${mm}-${dd}`;
+
+      const res = await apiRequest(`/appointments/${clinicId}?branchId=${branchId}&doctorId=${doctorId}&date=${dateStr}`);
+      setAppointmentsList(res.appointments || []);
+    } catch (err) {
+      console.error('Error fetching appointments:', err);
+    }
+  };
+
+  const fetchPatients = async () => {
+    try {
+      const res = await apiRequest('/patients');
+      setPatientsList(res.patients || []);
+    } catch (err) {
+      console.error('Error fetching patients:', err);
+    }
+  };
+
+  const handleCheckIn = async (appointment: any) => {
+    if (!branchId) return;
+    setIsCheckingIn(appointment.id);
+    try {
+      await apiRequest(`/queues/${branchId}/token`, {
+        method: 'POST',
+        body: JSON.stringify({
+          doctorId,
+          patientPhone: appointment.patient.phone,
+          patientName: appointment.patient.name,
+          type: appointment.type === 'EMERGENCY' ? 'EMERGENCY' : 'GENERAL',
+          visitType: appointment.type,
+          chiefComplaint: `Checked in from appointment slot ${appointment.timeSlot}`,
+          appointmentId: appointment.id
+        })
+      });
+      // Refresh list
+      await fetchAppointments();
+      await fetchQueue(branchId, doctorId);
+    } catch (err: any) {
+      alert(err.message || 'Failed to check in patient.');
+    } finally {
+      setIsCheckingIn(null);
+    }
+  };
+
+  const handleRegisterPatient = async () => {
+    if (!addPatientName || !addPatientPhone) {
+      alert('Please fill in patient name and phone number.');
+      return;
+    }
+    setIsRegisteringPatient(true);
+    try {
+      await apiRequest('/auth/patient-login', {
+        method: 'POST',
+        body: JSON.stringify({
+          phone: addPatientPhone,
+          name: addPatientName,
+          age: addPatientAge ? parseInt(addPatientAge) : undefined,
+          gender: addPatientGender
+        })
+      });
+      // Reset inputs & close modal
+      setAddPatientName('');
+      setAddPatientPhone('');
+      setAddPatientAge('');
+      setAddPatientGender('Male');
+      setShowAddPatient(false);
+      // Refresh patients list
+      await fetchPatients();
+    } catch (err: any) {
+      alert(err.message || 'Failed to register patient.');
+    } finally {
+      setIsRegisteringPatient(false);
+    }
+  };
+
+  const handleViewHistory = async (patientId: string, patientName: string) => {
+    if (!patientId) return;
+    setHistoryPatientName(patientName);
+    setIsHistoryOpen(true);
+    setIsLoadingHistory(true);
+    setSelectedPatientHistory([]);
+    try {
+      const res = await apiRequest(`/patients/id/${patientId}/history`);
+      setSelectedPatientHistory(res.history || []);
+    } catch (err) {
+      console.error('Error fetching patient history:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  const handleViewHistoryByPhone = async (phone: string, patientName: string) => {
+    setHistoryPatientName(patientName);
+    setIsHistoryOpen(true);
+    setIsLoadingHistory(true);
+    setSelectedPatientHistory([]);
+    try {
+      const pRes = await apiRequest(`/patients/${phone}`);
+      if (pRes.patient && pRes.patient.id) {
+        const res = await apiRequest(`/patients/id/${pRes.patient.id}/history`);
+        setSelectedPatientHistory(res.history || []);
+      } else {
+        setSelectedPatientHistory([]);
+      }
+    } catch (err) {
+      console.error('Error fetching patient history by phone:', err);
+      setSelectedPatientHistory([]);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   // 2. Init queue syncing
   useEffect(() => {
@@ -120,11 +311,20 @@ export default function DoctorConsole() {
       fetchQueue(branchId, doctorId);
       initSocket(branchId);
       loadPerformanceStats();
+      fetchAppointments();
     }
     return () => {
       disconnectSocket();
     };
   }, [branchId, doctorId]);
+
+  useEffect(() => {
+    if (activeTab === 'Patients') {
+      fetchPatients();
+    } else if (activeTab === 'Appointments') {
+      fetchAppointments();
+    }
+  }, [activeTab, branchId, doctorId]);
 
   const loadPerformanceStats = async () => {
     if (!clinicId) return;
@@ -233,6 +433,121 @@ export default function DoctorConsole() {
     );
   };
 
+  if (isOnboarding) {
+    return (
+      <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] flex flex-col items-center justify-center p-8 font-sans">
+        <div className="max-w-2xl w-full animate-in fade-in zoom-in-95 duration-300">
+          <div className="text-center mb-8">
+            <h2 className="font-serif text-3xl font-bold tracking-tight text-[#1a202c]">Set Up Your Clinic</h2>
+            <p className="mt-2 text-sm text-[#64748b]">Configure your branch and doctors to get started.</p>
+          </div>
+
+          <div className="bg-white p-8 border border-[#e9e9e7] shadow-sm rounded-xl">
+            {onboardError && (
+              <div className="mb-6 p-3 bg-red-50 text-red-600 text-xs rounded border border-red-200">{onboardError}</div>
+            )}
+
+            <div className="flex justify-between items-center mb-8 border-b border-[#e9e9e7] pb-4">
+              <span className={`text-xs font-bold uppercase tracking-wider ${step === 1 ? 'text-[#01696f]' : 'text-[#64748b]'}`}>1. Details</span>
+              <span className={`text-xs font-bold uppercase tracking-wider ${step === 2 ? 'text-[#01696f]' : 'text-[#64748b]'}`}>2. Specialities</span>
+              <span className={`text-xs font-bold uppercase tracking-wider ${step === 3 ? 'text-[#01696f]' : 'text-[#64748b]'}`}>3. Doctors</span>
+            </div>
+
+            {step === 1 && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Clinic Name</label>
+                  <input type="text" required placeholder="Apex Clinic" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={clinicName} onChange={(e) => setClinicName(e.target.value)} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Name</label>
+                    <input type="text" required placeholder="John Doe" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminName} onChange={(e) => setAdminName(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Phone</label>
+                    <input type="text" required placeholder="9998887770" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminPhone} onChange={(e) => setAdminPhone(e.target.value)} />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Email</label>
+                  <input type="email" required placeholder="admin@clinic.com" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Password</label>
+                  <input type="password" required placeholder="••••••••" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
+                </div>
+                <button onClick={() => { if (clinicName && adminName && adminEmail && adminPassword && adminPhone) setStep(2); else setOnboardError('Fill all details'); }} className="w-full mt-6 py-2 bg-[#01696f] text-white font-bold text-sm rounded-md shadow-md hover:bg-[#005459] transition-colors flex items-center justify-center gap-2">
+                  Continue <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
+
+            {step === 2 && (
+              <div>
+                <p className="text-sm text-[#64748b] mb-4">Select all specialities offered:</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {SPECIALITIES_LIST.map((spec) => {
+                    const sel = selectedSpecialities.includes(spec);
+                    return (
+                      <button key={spec} onClick={() => {
+                        if (sel) setSelectedSpecialities(selectedSpecialities.filter(s => s !== spec));
+                        else setSelectedSpecialities([...selectedSpecialities, spec]);
+                      }} className={`p-3 text-left border rounded-md text-sm font-semibold transition-all shadow-xs ${sel ? 'border-[#01696f] bg-[#e6f3f4] text-[#01696f]' : 'border-[#e9e9e7] bg-white text-[#64748b] hover:bg-[#f4f4f3]'}`}>
+                        {spec}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-8 flex gap-4">
+                  <button onClick={() => setStep(1)} className="w-1/2 py-2 border border-[#e9e9e7] bg-white text-[#1a202c] font-bold text-sm rounded-md shadow-xs hover:bg-[#f4f4f3]">Back</button>
+                  <button onClick={() => { if (selectedSpecialities.length > 0) setStep(3); else setOnboardError('Select at least one.'); }} className="w-1/2 py-2 bg-[#01696f] text-white font-bold text-sm rounded-md shadow-md hover:bg-[#005459]">Configure Doctors</button>
+                </div>
+              </div>
+            )}
+
+            {step === 3 && (
+              <div className="space-y-6">
+                {doctors.map((doc, docIdx) => (
+                  <div key={docIdx} className="border border-[#e9e9e7] p-5 rounded-lg bg-[#fbfbfa] space-y-4 relative shadow-inner">
+                    {doctors.length > 1 && (
+                      <button onClick={() => setDoctors(doctors.filter((_, i) => i !== docIdx))} className="absolute top-3 right-3 text-red-400 hover:text-red-600">
+                        <Trash className="h-4 w-4" />
+                      </button>
+                    )}
+                    <h4 className="font-bold text-sm text-[#01696f]">Doctor #{docIdx + 1}</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase">Doctor Name</label>
+                        <input type="text" className="w-full px-3 py-1.5 border border-[#e9e9e7] rounded-md outline-none text-sm shadow-xs" value={doc.name} onChange={(e) => handleDoctorChange(docIdx, 'name', e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase">Speciality</label>
+                        <select className="w-full px-3 py-1.5 border border-[#e9e9e7] rounded-md outline-none text-sm shadow-xs" value={doc.speciality} onChange={(e) => handleDoctorChange(docIdx, 'speciality', e.target.value)}>
+                          <option value="">Choose...</option>
+                          {selectedSpecialities.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <button onClick={() => setDoctors([...doctors, { name: '', email: '', password: 'DoctorCureQ123!', phone: '', speciality: selectedSpecialities[0] || '', schedules: [{ dayOfWeek: '1', startTime: '09:00', endTime: '17:00', slotDuration: '15', maxPatients: '30', bufferTime: '5' }] }])} className="w-full py-2 bg-white border border-[#e9e9e7] border-dashed text-sm font-semibold text-[#64748b] hover:text-[#01696f] hover:bg-[#f4f4f3] rounded-md shadow-xs">
+                  + Add Another Doctor
+                </button>
+                <div className="mt-8 flex gap-4 pt-4 border-t border-[#e9e9e7]">
+                  <button onClick={() => setStep(2)} className="w-1/2 py-2 border border-[#e9e9e7] bg-white text-[#1a202c] font-bold text-sm rounded-md shadow-xs hover:bg-[#f4f4f3]">Back</button>
+                  <button onClick={handleOnboardSubmit} disabled={loading} className="w-1/2 py-2 bg-[#01696f] text-white font-bold text-sm rounded-md shadow-md hover:bg-[#005459] disabled:opacity-50">
+                    {loading ? 'Processing...' : 'Complete Setup'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] flex flex-col md:flex-row relative">
       
@@ -249,9 +564,15 @@ export default function DoctorConsole() {
           <NavItem icon={FileBarChart} label="Reports" id="Reports" />
         </nav>
         <div className="p-4 border-t border-[#e9e9e7]">
+          <button 
+            onClick={handleResetClinic}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-xs text-red-600 hover:bg-red-50 transition-colors cursor-pointer mb-4"
+          >
+            <LogOut className="h-3.5 w-3.5" /> Reset Sandbox Clinic
+          </button>
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-full bg-[#e6f3f4] text-[#01696f] flex items-center justify-center font-bold">
-              {doctorName.charAt(0)}
+              {doctorName ? doctorName.charAt(0) : 'D'}
             </div>
             <div>
               <p className="text-sm font-semibold">{doctorName}</p>
@@ -266,19 +587,44 @@ export default function DoctorConsole() {
         
         {/* Top Navbar */}
         <header className="bg-white border-b border-[#e9e9e7] px-8 py-4 flex items-center justify-between sticky top-0 z-10">
-          <div className="relative w-96">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#64748b]" />
-            <input 
-              type="text" 
-              placeholder="Search patients, appointments..." 
-              className="w-full pl-10 pr-4 py-2 bg-[#fbfbfa] border border-[#e9e9e7] rounded-md text-sm focus:outline-none focus:border-[#01696f] focus:ring-1 focus:ring-[#01696f] transition-all"
-            />
-          </div>
           <div className="flex items-center gap-4">
-            <button className="p-2 text-[#64748b] hover:text-[#1a202c] hover:bg-[#fbfbfa] rounded-full transition-transitions relative cursor-pointer">
-              <Bell className="h-5 w-5" />
-              <span className="absolute top-1.5 right-2 h-2 w-2 bg-[#01696f] rounded-full"></span>
-            </button>
+            <span className="font-bold text-[#1a202c]">Doctor Console</span>
+            <div className="h-6 w-px bg-[#e9e9e7]"></div>
+            <select 
+              value={doctorId} 
+              onChange={(e) => {
+                const doc = doctorsList.find(d => d.id === e.target.value);
+                if (doc) {
+                  setDoctorId(doc.id);
+                  setDoctorName(doc.user.name);
+                  setSpeciality(doc.speciality);
+                  localStorage.setItem('cureq_active_doctor_id', doc.id);
+                }
+              }}
+              className="px-3 py-1.5 border border-[#e9e9e7] rounded-md bg-[#fbfbfa] text-sm focus:outline-none focus:border-[#01696f] text-[#1a202c] shadow-xs cursor-pointer"
+            >
+              {doctorsList.length > 0 ? doctorsList.map(doc => (
+                <option key={doc.id} value={doc.id}>Console for {doc.user?.name} ({doc.speciality})</option>
+              )) : <option>No Doctors Available</option>}
+            </select>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <a 
+              href={`/display/${clinicId}`} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-xs font-bold text-[#01696f] hover:underline flex items-center gap-1 border border-[#01696f]/20 bg-[#e6f3f4] px-2.5 py-1 rounded shadow-xs"
+            >
+              <Tv className="h-3.5 w-3.5" /> Live TV
+            </a>
+            <div className="h-6 w-px bg-[#e9e9e7]"></div>
+            <a 
+              href="/dashboard/reception" 
+              className="text-xs font-semibold text-[#64748b] hover:text-[#1a202c] hover:underline"
+            >
+              Reception Console
+            </a>
             <div className="h-6 w-px bg-[#e9e9e7]"></div>
             <span className="text-xs bg-[#e6f3f4] text-[#01696f] px-2.5 py-1 rounded border border-[#01696f]/20 font-medium flex items-center gap-1.5 shadow-xs">
               <span className="h-2 w-2 rounded-full bg-[#01696f] animate-pulse"></span> Live Sync
@@ -286,7 +632,8 @@ export default function DoctorConsole() {
           </div>
         </header>
 
-        {/* Dynamic Content based on Active Tab */}
+        {/* ONBOARDING WIZARD */}
+        {/* DOCTOR CONSOLE MAIN CONTENT */}
         <div className="p-8 max-w-7xl mx-auto w-full space-y-8">
           
           {/* Welcome & Quick Actions */}
@@ -343,6 +690,13 @@ export default function DoctorConsole() {
                                 <span className="flex items-center gap-1"><Phone className="h-3 w-3" /> {currentPatient.patientPhone}</span>
                                 <span className="text-[#e9e9e7]">|</span>
                                 <span className="capitalize font-medium">#{currentPatient.tokenNo}</span>
+                                <span className="text-[#e9e9e7]">|</span>
+                                <button 
+                                  onClick={() => handleViewHistoryByPhone(currentPatient.patientPhone, currentPatient.patientName)}
+                                  className="text-xs font-semibold text-[#01696f] hover:underline flex items-center gap-1 cursor-pointer"
+                                >
+                                  <FileText className="h-3 w-3" /> Medical History
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -443,7 +797,7 @@ export default function DoctorConsole() {
                           <div>
                             <h4 className="font-bold text-base text-[#1a202c]">{nextPatient.patientName}</h4>
                             <span className="text-[11px] text-[#64748b] font-medium block mt-1">
-                              Token: {nextPatient.tokenNo} • Type: {nextPatient.type}
+                              Token: {nextPatient.tokenNo} • Type: {nextPatient.type} • Seat: <span className={nextPatient.seatStatus === 'SEATED' ? 'text-[#01696f] font-bold' : 'text-amber-700 font-bold'}>{nextPatient.seatStatus.replace('_', ' ')}</span>
                             </span>
                           </div>
                           <span className="text-[10px] bg-[#e6f3f4] text-[#01696f] border border-[#01696f]/20 px-2 py-1 rounded font-bold uppercase tracking-wider shadow-xs">
@@ -516,45 +870,73 @@ export default function DoctorConsole() {
           {activeTab === 'Appointments' && (
             <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden animate-in fade-in duration-300">
               <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa] flex justify-between items-center">
-                <h2 className="font-semibold text-lg">Today's Schedule</h2>
+                <h2 className="font-semibold text-lg">Today's Scheduled Appointments</h2>
                 <span className="text-xs font-semibold bg-[#e6f3f4] text-[#01696f] px-3 py-1 rounded-full">
-                  {activeQueue.length} Waiting
+                  {appointmentsList.filter(a => a.status === 'BOOKED').length} Booked Today
                 </span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-[#fbfbfa] border-b border-[#e9e9e7] text-xs uppercase font-semibold text-[#64748b]">
                     <tr>
-                      <th className="px-6 py-3">Token</th>
+                      <th className="px-6 py-3">Time Slot</th>
                       <th className="px-6 py-3">Patient Name</th>
-                      <th className="px-6 py-3">Type</th>
+                      <th className="px-6 py-3">Phone</th>
+                      <th className="px-6 py-3">Visit Type</th>
                       <th className="px-6 py-3">Status</th>
-                      <th className="px-6 py-3 text-right">Est. Wait</th>
+                      <th className="px-6 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#e9e9e7]">
-                    {activeQueue.length === 0 ? (
+                    {appointmentsList.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="px-6 py-8 text-center text-[#64748b]">No patients in queue currently.</td>
+                        <td colSpan={6} className="px-6 py-8 text-center text-[#64748b]">No scheduled appointments for today.</td>
                       </tr>
                     ) : (
-                      activeQueue.map((pt) => (
-                        <tr key={pt.id} className="hover:bg-[#fbfbfa] transition-colors">
-                          <td className="px-6 py-4 font-bold text-[#01696f]">{pt.tokenNo}</td>
-                          <td className="px-6 py-4 font-medium">{pt.patientName}</td>
+                      appointmentsList.map((app) => (
+                        <tr key={app.id} className="hover:bg-[#fbfbfa] transition-colors">
+                          <td className="px-6 py-4 font-bold text-[#01696f] flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5 text-[#64748b]" /> {app.timeSlot}
+                          </td>
+                          <td className="px-6 py-4 font-medium text-[#1a202c]">{app.patient?.name}</td>
+                          <td className="px-6 py-4 text-[#64748b]">{app.patient?.phone}</td>
                           <td className="px-6 py-4">
-                            <span className="px-2 py-1 bg-gray-100 text-gray-700 text-[10px] uppercase rounded font-bold tracking-wider">
-                              {pt.type}
+                            <span className={`px-2 py-1 text-[10px] uppercase rounded font-bold tracking-wider ${
+                              app.type === 'EMERGENCY' ? 'bg-red-50 text-red-600 border border-red-100' : 'bg-gray-100 text-gray-700'
+                            }`}>
+                              {app.type}
                             </span>
                           </td>
                           <td className="px-6 py-4">
                             <span className={`px-2 py-1 text-[10px] uppercase rounded font-bold tracking-wider ${
-                              pt.status === 'IN_CONSULTATION' ? 'bg-[#e6f3f4] text-[#01696f]' : 'bg-amber-50 text-amber-600'
+                              app.status === 'BOOKED' 
+                                ? 'bg-blue-50 text-blue-600 border border-blue-200' 
+                                : app.status === 'CHECKED_IN' 
+                                  ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' 
+                                  : 'bg-red-50 text-red-600 border border-red-200'
                             }`}>
-                              {pt.status.replace('_', ' ')}
+                              {app.status.replace('_', ' ')}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-right text-[#64748b]">{pt.estimatedWait} mins</td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex gap-2 justify-end">
+                              {app.status === 'BOOKED' && (
+                                <button
+                                  onClick={() => handleCheckIn(app)}
+                                  disabled={isCheckingIn === app.id}
+                                  className="text-xs font-bold text-white bg-[#01696f] hover:bg-[#005459] px-3 py-1.5 rounded shadow-sm disabled:opacity-50 transition-all flex items-center gap-1 cursor-pointer"
+                                >
+                                  {isCheckingIn === app.id ? 'Checking In...' : 'Check-in'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleViewHistoryByPhone(app.patient?.phone, app.patient?.name)}
+                                className="text-xs font-semibold text-[#64748b] hover:text-[#1a202c] bg-white border border-[#e9e9e7] px-2.5 py-1.5 rounded shadow-xs cursor-pointer"
+                              >
+                                History
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))
                     )}
@@ -571,17 +953,65 @@ export default function DoctorConsole() {
                 <h2 className="font-semibold text-lg">Patient Database</h2>
                 <div className="relative w-64">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#64748b]" />
-                  <input type="text" placeholder="Search records..." className="w-full pl-10 pr-3 py-1.5 border border-[#e9e9e7] rounded text-sm" />
+                  <input 
+                    type="text" 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search name or phone..." 
+                    className="w-full pl-10 pr-3 py-1.5 border border-[#e9e9e7] rounded text-sm focus:outline-none focus:border-[#01696f]" 
+                  />
                 </div>
               </div>
-              <div className="p-8 text-center">
-                <Users className="h-12 w-12 text-[#e9e9e7] mx-auto mb-3" />
-                <h3 className="font-medium text-[#1a202c]">No records found</h3>
-                <p className="text-sm text-[#64748b] mt-1">Add a new patient to see them listed here.</p>
-                <button onClick={() => setShowAddPatient(true)} className="mt-4 px-4 py-2 bg-[#01696f] text-white rounded-md text-sm font-semibold hover:bg-[#005459]">
-                  Add First Patient
-                </button>
-              </div>
+              {patientsList.filter(p => {
+                const q = searchQuery.toLowerCase();
+                return (p.name || '').toLowerCase().includes(q) || (p.phone || '').toLowerCase().includes(q);
+              }).length === 0 ? (
+                <div className="p-8 text-center">
+                  <Users className="h-12 w-12 text-[#e9e9e7] mx-auto mb-3" />
+                  <h3 className="font-medium text-[#1a202c]">No records found</h3>
+                  <p className="text-sm text-[#64748b] mt-1">Add a new patient or adjust your search.</p>
+                  <button onClick={() => setShowAddPatient(true)} className="mt-4 px-4 py-2 bg-[#01696f] text-white rounded-md text-sm font-semibold hover:bg-[#005459]">
+                    Add Patient
+                  </button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[#fbfbfa] border-b border-[#e9e9e7] text-xs uppercase font-semibold text-[#64748b]">
+                      <tr>
+                        <th className="px-6 py-3">Patient Name</th>
+                        <th className="px-6 py-3">Phone</th>
+                        <th className="px-6 py-3">Age</th>
+                        <th className="px-6 py-3">Gender</th>
+                        <th className="px-6 py-3">Blood Group</th>
+                        <th className="px-6 py-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#e9e9e7]">
+                      {patientsList.filter(p => {
+                        const q = searchQuery.toLowerCase();
+                        return (p.name || '').toLowerCase().includes(q) || (p.phone || '').toLowerCase().includes(q);
+                      }).map((p) => (
+                        <tr key={p.id} className="hover:bg-[#fbfbfa] transition-colors">
+                          <td className="px-6 py-4 font-semibold text-[#1a202c]">{p.name}</td>
+                          <td className="px-6 py-4 text-[#64748b]">{p.phone}</td>
+                          <td className="px-6 py-4">{p.age ? `${p.age} yrs` : 'N/A'}</td>
+                          <td className="px-6 py-4 capitalize">{p.gender || 'N/A'}</td>
+                          <td className="px-6 py-4 uppercase font-medium">{p.bloodGroup || 'N/A'}</td>
+                          <td className="px-6 py-4 text-right">
+                            <button
+                              onClick={() => handleViewHistory(p.id, p.name)}
+                              className="text-xs font-semibold text-[#01696f] hover:underline flex items-center gap-1 justify-end ml-auto bg-[#e6f3f4] px-2.5 py-1.5 rounded shadow-xs border border-[#01696f]/20 cursor-pointer"
+                            >
+                              <FileText className="h-3.5 w-3.5" /> Medical History
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 
@@ -616,31 +1046,64 @@ export default function DoctorConsole() {
             </div>
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Full Name</label>
-                <input type="text" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f]" placeholder="John Doe" />
+                <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Full Name *</label>
+                <input 
+                  type="text" 
+                  value={addPatientName}
+                  onChange={(e) => setAddPatientName(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f]" 
+                  placeholder="John Doe" 
+                />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Phone Number</label>
-                <input type="tel" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f]" placeholder="+91 9876543210" />
+                <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Phone Number *</label>
+                <input 
+                  type="tel" 
+                  value={addPatientPhone}
+                  onChange={(e) => setAddPatientPhone(e.target.value)}
+                  className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f]" 
+                  placeholder="9876543210" 
+                />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Age</label>
-                  <input type="number" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f]" placeholder="30" />
+                  <input 
+                    type="number" 
+                    value={addPatientAge}
+                    onChange={(e) => setAddPatientAge(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f]" 
+                    placeholder="30" 
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Gender</label>
-                  <select className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f]">
-                    <option>Male</option>
-                    <option>Female</option>
-                    <option>Other</option>
+                  <select 
+                    value={addPatientGender}
+                    onChange={(e) => setAddPatientGender(e.target.value)}
+                    className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f]"
+                  >
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
                   </select>
                 </div>
               </div>
             </div>
             <div className="px-6 py-4 border-t border-[#e9e9e7] bg-[#fbfbfa] flex justify-end gap-3">
-              <button onClick={() => setShowAddPatient(false)} className="px-4 py-2 border border-[#e9e9e7] bg-white text-[#1a202c] font-semibold text-sm rounded-md hover:bg-[#f4f4f3]">Cancel</button>
-              <button onClick={() => setShowAddPatient(false)} className="px-4 py-2 bg-[#01696f] text-white font-semibold text-sm rounded-md hover:bg-[#005459]">Register Patient</button>
+              <button 
+                onClick={() => setShowAddPatient(false)} 
+                className="px-4 py-2 border border-[#e9e9e7] bg-white text-[#1a202c] font-semibold text-sm rounded-md hover:bg-[#f4f4f3]"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleRegisterPatient} 
+                disabled={isRegisteringPatient}
+                className="px-4 py-2 bg-[#01696f] text-white font-semibold text-sm rounded-md hover:bg-[#005459] disabled:opacity-50"
+              >
+                {isRegisteringPatient ? 'Registering...' : 'Register Patient'}
+              </button>
             </div>
           </div>
         </div>
@@ -701,7 +1164,72 @@ export default function DoctorConsole() {
           </div>
         </div>
       )}
+      {/* Medical History Viewer Modal */}
+      {isHistoryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-[#e9e9e7] flex justify-between items-center bg-[#fbfbfa]">
+              <h3 className="font-bold text-lg">Medical History - {historyPatientName}</h3>
+              <button onClick={() => setIsHistoryOpen(false)} className="text-[#64748b] hover:text-[#1a202c]">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto space-y-4">
+              {isLoadingHistory ? (
+                <div className="text-center py-8 text-[#64748b]">Loading patient history...</div>
+              ) : selectedPatientHistory.length === 0 ? (
+                <div className="text-center py-8 text-[#64748b]">No past visit history recorded for this patient.</div>
+              ) : (
+                <div className="space-y-4">
+                  {selectedPatientHistory.map((visit: any) => (
+                    <div key={visit.id} className="border border-[#e9e9e7] rounded-lg p-4 bg-[#fbfbfa]">
+                      <div className="flex justify-between items-start mb-2 pb-2 border-b border-[#e9e9e7]">
+                        <div>
+                          <p className="font-bold text-[#01696f] text-sm">{visit.specialty} Consult</p>
+                          <p className="text-xs text-[#64748b]">Doctor: {visit.doctorName}</p>
+                        </div>
+                        <span className="text-xs text-[#64748b] font-medium">
+                          {new Date(visit.date).toLocaleDateString(undefined, {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </span>
+                      </div>
+                      <div className="space-y-2 text-sm">
+                        {visit.chiefComplaint && (
+                          <div>
+                            <strong className="text-xs text-[#64748b] uppercase tracking-wider block">Chief Complaint</strong>
+                            <p className="text-[#1a202c] font-medium">{visit.chiefComplaint}</p>
+                          </div>
+                        )}
+                        {visit.notes && (
+                          <div>
+                            <strong className="text-xs text-[#64748b] uppercase tracking-wider block">Notes / Prescription</strong>
+                            <p className="text-[#1a202c] bg-white p-2.5 rounded border border-[#e9e9e7] whitespace-pre-wrap font-mono text-xs">{visit.notes}</p>
+                          </div>
+                        )}
+                        {visit.followUpDate && (
+                          <div>
+                            <strong className="text-xs text-[#64748b] uppercase tracking-wider">Follow Up Date: </strong>
+                            <span className="text-sm font-medium">{visit.followUpDate}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-[#e9e9e7] bg-[#fbfbfa] flex justify-end">
+              <button onClick={() => setIsHistoryOpen(false)} className="px-4 py-2 bg-[#01696f] text-white font-semibold text-sm rounded-md hover:bg-[#005459]">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
-    </div>
-  );
-}
+      </div>
+    );
+  }

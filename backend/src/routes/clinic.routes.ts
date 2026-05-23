@@ -180,4 +180,40 @@ router.put('/:id/plan', authenticateToken, requireRole(['CLINIC_ADMIN']), async 
   }
 });
 
+/**
+ * @route   PUT /api/clinics/:id/branches/:branchId/seats
+ * @desc    Update waiting room seats capacity (waitingSeats)
+ */
+router.put('/:id/branches/:branchId/seats', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+  const { waitingSeats } = req.body;
+  const { id: clinicId, branchId } = req.params;
+
+  if (waitingSeats === undefined || typeof waitingSeats !== 'number' || waitingSeats < 0) {
+    return res.status(400).json({ error: 'Invalid waiting room seats value.' });
+  }
+
+  try {
+    // Check if the current user owns this clinic
+    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } });
+    if (!clinic || clinic.adminId !== (req as any).user.id) {
+      return res.status(403).json({ error: 'Forbidden. You do not own this clinic.' });
+    }
+
+    const branch = await prisma.branch.update({
+      where: { id: branchId },
+      data: { waitingSeats },
+    });
+
+    // Run promotion logic to fill any newly available seats
+    const io = req.app.get('io');
+    const { promoteWaitingOutsidePatients } = require('./queue.routes');
+    await promoteWaitingOutsidePatients(branchId, io);
+
+    res.json({ message: 'Waiting room seats updated successfully.', branch });
+  } catch (err) {
+    console.error('Update branch seats error:', err);
+    res.status(500).json({ error: 'Server error updating seats capacity.' });
+  }
+});
+
 export default router;
