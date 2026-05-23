@@ -1,0 +1,219 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  SUPER_ADMIN
+  CLINIC_ADMIN
+  DOCTOR
+  PATIENT
+}
+
+enum TokenStatus {
+  WAITING
+  IN_CONSULTATION
+  SERVED
+  SKIPPED
+  NO_SHOW
+}
+
+enum TokenType {
+  GENERAL
+  PRIORITY
+  EMERGENCY
+}
+
+enum VisitType {
+  NEW
+  FOLLOW_UP
+  EMERGENCY
+}
+
+enum AppointmentStatus {
+  BOOKED
+  CHECKED_IN
+  CANCELLED
+}
+
+enum SubscriptionPlan {
+  FREE
+  STARTER
+  PRO
+  CHAIN
+}
+
+enum NotificationChannel {
+  SMS
+  WHATSAPP
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String?       @unique
+  phone        String?       @unique
+  password     String?       // Nullable for OTP-based patient login
+  name         String
+  role         Role          @default(PATIENT)
+  age          Int?
+  gender       String?
+  bloodGroup   String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Relations
+  clinicAdmin  Clinic?       @relation("ClinicAdmin")
+  doctorProfile DoctorProfile?
+  tokens       Token[]       @relation("PatientTokens")
+  appointments Appointment[] @relation("PatientAppointments")
+  visitLogs    VisitLog[]    @relation("PatientHistory")
+}
+
+model Clinic {
+  id          String           @id @default(uuid())
+  name        String
+  speciality  String           // Comma-separated list (e.g. "Dentist, General Physician")
+  plan        SubscriptionPlan @default(FREE)
+  active      Boolean          @default(true)
+  adminId     String           @unique
+  admin       User             @relation("ClinicAdmin", fields: [adminId], references: [id], onDelete: Cascade)
+  branches    Branch[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model Branch {
+  id          String           @id @default(uuid())
+  name        String
+  address     String
+  phone       String
+  clinicId    String
+  clinic      Clinic           @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  schedules   DoctorSchedule[]
+  tokens      Token[]
+  appointments Appointment[]
+  notifications NotificationLog[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model DoctorProfile {
+  id           String           @id @default(uuid())
+  userId       String           @unique
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  speciality   String
+  bio          String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  
+  // Relations
+  schedules    DoctorSchedule[]
+  tokens       Token[]          @relation("DoctorTokens")
+  appointments Appointment[]    @relation("DoctorAppointments")
+}
+
+model DoctorSchedule {
+  id           String        @id @default(uuid())
+  doctorId     String
+  doctor       DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  branchId     String
+  branch       Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  
+  dayOfWeek    Int           // 0 = Sunday, 1 = Monday, etc.
+  startTime    String        // "09:00"
+  endTime      String        // "17:00"
+  slotDuration Int           @default(15) // Minutes per patient
+  maxPatients  Int           @default(30)
+  bufferTime   Int           @default(5)  // Minutes between slots
+  active       Boolean       @default(true)
+  
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@unique([doctorId, branchId, dayOfWeek])
+}
+
+model Token {
+  id             String      @id @default(uuid())
+  tokenNo        String      // e.g. "GP-012" or "DENT-004"
+  queueOrder     Int         // Ordering sequence within the active queue day
+  type           TokenType   @default(GENERAL)
+  visitType      VisitType   @default(NEW)
+  status         TokenStatus @default(WAITING)
+  chiefComplaint String?
+  notes          String?     // Quick consultation notes
+  estimatedWait  Int         // ETA in minutes
+  checkInTime    DateTime    @default(now())
+  startTime      DateTime?
+  endTime        DateTime?
+  
+  // Patient details (can be linked to User or just stored flat for fast registration)
+  patientId      String?
+  patient        User?       @relation("PatientTokens", fields: [patientId], references: [id], onDelete: SetNull)
+  patientName    String      // Cached copy or fallback for quick walk-ins
+  patientPhone   String      // Cached copy or fallback for quick walk-ins
+
+  doctorId       String
+  doctor         DoctorProfile @relation("DoctorTokens", fields: [doctorId], references: [id], onDelete: Cascade)
+  branchId       String
+  branch         Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  
+  appointmentId  String?     @unique
+  appointment    Appointment? @relation("TokenAppointment", fields: [appointmentId], references: [id], onDelete: SetNull)
+  
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+model Appointment {
+  id           String            @id @default(uuid())
+  date         String            // YYYY-MM-DD
+  timeSlot     String            // "10:30"
+  type         VisitType         @default(NEW)
+  status       AppointmentStatus @default(BOOKED)
+  
+  patientId    String
+  patient      User              @relation("PatientAppointments", fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId     String
+  doctor       DoctorProfile     @relation("DoctorAppointments", fields: [doctorId], references: [id], onDelete: Cascade)
+  branchId     String
+  branch       Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  
+  token        Token?            @relation("TokenAppointment")
+  
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([doctorId, branchId, date, timeSlot])
+}
+
+model VisitLog {
+  id             String    @id @default(uuid())
+  date           DateTime  @default(now())
+  tokenNo        String
+  doctorName     String
+  specialty      String
+  chiefComplaint String?
+  notes          String?   // Prescription / Consultation notes
+  followUpDate   String?   // YYYY-MM-DD or custom text
+  
+  patientId      String
+  patient        User      @relation("PatientHistory", fields: [patientId], references: [id], onDelete: Cascade)
+  
+  createdAt      DateTime  @default(now())
+}
+
+model NotificationLog {
+  id        String              @id @default(uuid())
+  branchId  String
+  branch    Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  phone     String
+  message   String
+  channel   NotificationChannel
+  status    String              // "SENT", "FAILED"
+  createdAt DateTime            @default(now())
+}

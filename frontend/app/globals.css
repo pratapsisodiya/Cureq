@@ -1,0 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  /* Crisp, sophisticated teal accents */
+  --color-primary: #01696f;
+  --color-primary-hover: #005459;
+  --color-primary-light: #e6f3f4; /* Soft teal tint for highlights/badges */
+  --color-primary-dark: #003a3d;
+  
+  /* Clean Notion-inspired light neutrals */
+  --color-neutral-bg: #fbfbfa;     /* Soft, warm off-white */
+  --color-neutral-card: #ffffff;   /* Crisp white for cards */
+  --color-neutral-border: #e9e9e7; /* Subtle gray-brown line */
+  --color-neutral-text: #1a202c;   /* Deep charcoal for high contrast readability */
+  --color-neutral-muted: #64748b;  /* Mid-tone slate for secondary text */
+  
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+}
+
+:root {
+  --background: #fbfbfa;
+  --foreground: #1a202c;
+  --card-bg: #ffffff;
+  --border-color: #e9e9e7;
+  --primary-color: #01696f;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  transition: background-color 0.2s ease, color 0.2s ease;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased; /* Keeps text rendering clean */
+}
+
+/* Notion-style clean lines and border styles */
+.border-thin {
+  border: 1px solid var(--border-color);
+}
+
+.card-notion {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02); /* Very subtle depth */
+}
+
+/* Animations for chime alert flashing (Softened for light mode) */
+@keyframes flash-active {
+  0%, 100% { background-color: var(--card-bg); }
+  50% { background-color: rgba(1, 105, 111, 0.08); } /* Subtle pulse, not jarring */
+}
+
+.animate-flash-chime {
+  animation: flash-active 1.5s infinite ease-in-out;
+}
+
+/* A5 Token Slip Print Styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area, .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 148mm;
+    height: 210mm; /* A5 size */
+    padding: 20mm;
+    border: none;
+    background: white;
+    color: black;
+  }
+}
