@@ -4,11 +4,12 @@ import React, { useState, useEffect } from 'react';
 import { useQueueStore, TokenItem } from '../../../src/store/useQueueStore';
 import { apiRequest } from '../../../src/utils/api';
 import VoiceDictation from '../../../src/components/VoiceDictation';
-import { 
+import { useToast } from '../../../src/components/Toast';
+import {
   Play, SkipForward, AlertCircle, Save, CheckCircle2,
   Clock, ShieldAlert, FileText, ChevronRight, Activity,
   LayoutDashboard, Calendar, Users, FileBarChart, Bell, Search, Plus, UserPlus, X, User, Phone,
-  ArrowRight, ArrowLeft, Trash, Tv, Settings, LogOut
+  ArrowRight, ArrowLeft, Trash, Tv, Settings, LogOut, Ban, Coffee, Zap, Timer, History
 } from 'lucide-react';
 
 const SPECIALITIES_LIST = [
@@ -17,10 +18,12 @@ const SPECIALITIES_LIST = [
 ];
 
 export default function DoctorConsole() {
-  const { 
-    activeQueue, servedToday, fetchQueue, initSocket, disconnectSocket, 
-    callNext, skipToken, markNoShow 
+  const {
+    activeQueue, servedToday, fetchQueue, initSocket, disconnectSocket,
+    callNext, skipToken, markNoShow
   } = useQueueStore();
+
+  const { showToast, ToastComponent } = useToast();
 
   const [clinicId, setClinicId] = useState('');
   const [branchId, setBranchId] = useState('');
@@ -62,6 +65,27 @@ export default function DoctorConsole() {
   // Booked Appointments State
   const [appointmentsList, setAppointmentsList] = useState<any[]>([]);
   const [isCheckingIn, setIsCheckingIn] = useState<string | null>(null);
+  const [isCancellingAppt, setIsCancellingAppt] = useState<string | null>(null);
+  const [apptFilter, setApptFilter] = useState<'BOOKED' | 'CHECKED_IN' | 'CANCELLED' | 'ALL'>('BOOKED');
+
+  // Break mode
+  const [isOnBreak, setIsOnBreak] = useState(false);
+  const [breakEndTime, setBreakEndTime] = useState('');
+
+  // Availability toggle
+  const [isUnavailableToday, setIsUnavailableToday] = useState(false);
+  const [isTogglingAvailability, setIsTogglingAvailability] = useState(false);
+
+  // Consultation timer
+  const [consultElapsed, setConsultElapsed] = useState(0);
+  const [consultStartedAt, setConsultStartedAt] = useState<number | null>(null);
+
+  // Last visit context for returning patients
+  const [lastVisit, setLastVisit] = useState<any>(null);
+  const [isLoadingLastVisit, setIsLoadingLastVisit] = useState(false);
+
+  // Template picker
+  const [showTemplates, setShowTemplates] = useState(false);
 
   // Patient Database State
   const [patientsList, setPatientsList] = useState<any[]>([]);
@@ -79,6 +103,10 @@ export default function DoctorConsole() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [historyPatientName, setHistoryPatientName] = useState('');
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // Follow-up scheduling
+  const [followUpDate, setFollowUpDate] = useState('');
+  const [followUps, setFollowUps] = useState<any[]>([]);
 
   // Local consult states
   const [consultNotes, setConsultNotes] = useState('');
@@ -227,13 +255,88 @@ export default function DoctorConsole() {
           appointmentId: appointment.id
         })
       });
-      // Refresh list
+      showToast('Patient checked in and added to queue.', 'success');
       await fetchAppointments();
       await fetchQueue(branchId, doctorId);
     } catch (err: any) {
-      alert(err.message || 'Failed to check in patient.');
+      showToast(err.message || 'Failed to check in patient.', 'error');
     } finally {
       setIsCheckingIn(null);
+    }
+  };
+
+  const handleToggleBreak = async () => {
+    if (!isOnBreak) {
+      const resume = new Date(Date.now() + 15 * 60 * 1000);
+      const resumeStr = resume.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+      setBreakEndTime(resumeStr);
+      setIsOnBreak(true);
+      showToast('Break mode on. Queue paused. Resuming at ' + resumeStr, 'success');
+      try {
+        await apiRequest(`/queues/${branchId}/break`, {
+          method: 'PUT',
+          body: JSON.stringify({ doctorId, doctorName, onBreak: true, resumeAt: resumeStr }),
+        });
+      } catch { /* non-critical */ }
+    } else {
+      setIsOnBreak(false);
+      setBreakEndTime('');
+      showToast('Break ended. You are back online.', 'success');
+      try {
+        await apiRequest(`/queues/${branchId}/break`, {
+          method: 'PUT',
+          body: JSON.stringify({ doctorId, doctorName, onBreak: false, resumeAt: null }),
+        });
+      } catch { /* non-critical */ }
+    }
+  };
+
+  const handleToggleAvailability = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    setIsTogglingAvailability(true);
+    try {
+      if (!isUnavailableToday) {
+        await apiRequest(`/features/doctors/${doctorId}/unavailability`, {
+          method: 'POST',
+          body: JSON.stringify({ date: today, branchId, reason: 'Doctor unavailable' }),
+        });
+        setIsUnavailableToday(true);
+        showToast('Marked unavailable for today. Booking portal updated.', 'success');
+      } else {
+        await apiRequest(`/features/doctors/${doctorId}/unavailability/${today}`, { method: 'DELETE' });
+        setIsUnavailableToday(false);
+        showToast('You are now available for today.', 'success');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update availability.', 'error');
+    } finally { setIsTogglingAvailability(false); }
+  };
+
+  const PRESCRIPTION_TEMPLATES: Record<string, { label: string; text: string }[]> = {
+    default: [
+      { label: 'Fever / Cold', text: 'Diagnosis: Viral upper respiratory infection\nRx: Tab. Paracetamol 500mg — 1 tab TDS × 5 days\nTab. Cetirizine 10mg — 1 tab OD at night × 5 days\nSyrup Benadryl 2 tsp TDS if cough\nAdvice: Rest, hydration, warm fluids. Follow up if fever persists > 3 days.' },
+      { label: 'Hypertension', text: 'Diagnosis: Hypertension — controlled/uncontrolled\nRx: Tab. Amlodipine 5mg — 1 tab OD\nTab. Telmisartan 40mg — 1 tab OD\nAdvice: Low-sodium diet, regular exercise, avoid stress. Monitor BP daily. Follow up in 2 weeks.' },
+      { label: 'Gastritis', text: 'Diagnosis: Acute gastritis / peptic ulcer disease\nRx: Tab. Pantoprazole 40mg — 1 tab OD before breakfast × 4 weeks\nTab. Domperidone 10mg — 1 tab TDS before meals × 5 days\nAdvice: Avoid spicy food, alcohol, NSAIDs. Eat small frequent meals.' },
+      { label: 'Follow-up OK', text: 'Follow-up review: Condition improving. Continue existing medications. No new complaints. Next follow-up in 4 weeks or earlier if symptoms worsen.' },
+    ],
+    Dentist: [
+      { label: 'Extraction', text: 'Procedure: Tooth extraction performed under local anaesthesia.\nRx: Tab. Amoxicillin 500mg — 1 tab TDS × 5 days\nTab. Ibuprofen 400mg — 1 tab TDS after meals × 3 days\nTab. Metronidazole 400mg — 1 tab TDS × 5 days\nAdvice: Bite on gauze for 30 mins. Avoid hot liquids, smoking for 24 hrs. No vigorous rinsing.' },
+      { label: 'Root Canal', text: 'Procedure: Root canal treatment — sitting 1 of 2 / completed.\nRx: Tab. Amoxicillin 500mg — 1 tab TDS × 5 days\nTab. Ibuprofen 400mg — 1 tab TDS after meals × 3 days\nAdvice: Avoid chewing on treated side. Follow up for crown placement in 1 week.' },
+      { label: 'Scaling', text: 'Procedure: Dental scaling and polishing done.\nAdvice: Maintain oral hygiene — brush twice daily, floss daily. Use chlorhexidine mouthwash 2x/day for 1 week. Avoid staining foods (tea, coffee) for 48 hrs.' },
+      { label: 'Filling', text: 'Procedure: Composite/GIC filling placed.\nAdvice: Avoid eating on treated side for 1 hour. Sensitivity may persist for 1–2 weeks. Follow up if pain persists.' },
+    ],
+  };
+
+  const handleCancelAppointment = async (appointmentId: string) => {
+    setIsCancellingAppt(appointmentId);
+    try {
+      await apiRequest(`/appointments/${appointmentId}/cancel`, { method: 'PATCH' });
+      showToast('Appointment cancelled.', 'success');
+      await fetchAppointments();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to cancel appointment.', 'error');
+    } finally {
+      setIsCancellingAppt(null);
     }
   };
 
@@ -312,6 +415,17 @@ export default function DoctorConsole() {
       initSocket(branchId);
       loadPerformanceStats();
       fetchAppointments();
+      fetchFollowUps();
+
+      // Check today's unavailability
+      const today = new Date().toISOString().split('T')[0];
+      (async () => {
+        try {
+          const unavRes = await apiRequest(`/features/clinics/${clinicId}/unavailability?date=${today}`);
+          const isUnavailable = (unavRes.unavailability || []).some((u: any) => u.doctorId === doctorId);
+          setIsUnavailableToday(isUnavailable);
+        } catch { /* ignore */ }
+      })();
     }
     return () => {
       disconnectSocket();
@@ -348,10 +462,47 @@ export default function DoctorConsole() {
 
   useEffect(() => {
     if (currentPatient) {
-      setConsultNotes(currentPatient.chiefComplaint ? `Complaint: ${currentPatient.chiefComplaint}\nNotes: ` : '');
+      // Restore saved notes if they exist, otherwise pre-fill from complaint
+      if (currentPatient.notes) {
+        setConsultNotes(currentPatient.notes);
+      } else {
+        setConsultNotes(currentPatient.chiefComplaint ? `Complaint: ${currentPatient.chiefComplaint}\nNotes: ` : '');
+      }
     } else {
       setConsultNotes('');
     }
+  }, [currentPatient?.id]);
+
+  // Consultation timer — starts when a patient enters consultation
+  useEffect(() => {
+    if (currentPatient) {
+      const started = currentPatient.startTime ? new Date(currentPatient.startTime).getTime() : Date.now();
+      setConsultStartedAt(started);
+      setConsultElapsed(Math.floor((Date.now() - started) / 1000));
+      const timer = setInterval(() => {
+        setConsultElapsed(Math.floor((Date.now() - started) / 1000));
+      }, 1000);
+      return () => clearInterval(timer);
+    } else {
+      setConsultStartedAt(null);
+      setConsultElapsed(0);
+    }
+  }, [currentPatient?.id]);
+
+  // Auto-load last visit for returning patients
+  useEffect(() => {
+    const fetchLastVisit = async () => {
+      if (!currentPatient?.patientId) { setLastVisit(null); return; }
+      setIsLoadingLastVisit(true);
+      try {
+        const res = await apiRequest(`/patients/id/${currentPatient.patientId}/history`);
+        const history = res.history || [];
+        // Get the most recent visit that isn't this consultation
+        setLastVisit(history.length > 0 ? history[0] : null);
+      } catch { setLastVisit(null); }
+      finally { setIsLoadingLastVisit(false); }
+    };
+    fetchLastVisit();
   }, [currentPatient?.id]);
 
   const handleSaveNotes = async () => {
@@ -373,9 +524,18 @@ export default function DoctorConsole() {
     if (currentPatient && consultNotes) {
       await handleSaveNotes();
     }
-    await callNext(branchId, doctorId, consultNotes);
+    await callNext(branchId, doctorId, consultNotes, followUpDate || undefined);
+    setFollowUpDate('');
     fetchQueue(branchId, doctorId);
     loadPerformanceStats();
+  };
+
+  const fetchFollowUps = async () => {
+    if (!doctorId) return;
+    try {
+      const res = await apiRequest(`/patients/followups?doctorId=${doctorId}`);
+      setFollowUps(res.followUps || []);
+    } catch { /* non-critical */ }
   };
 
   const handleSkip = async () => {
@@ -453,6 +613,11 @@ export default function DoctorConsole() {
               <span className={`text-xs font-bold uppercase tracking-wider ${step === 3 ? 'text-[#01696f]' : 'text-[#64748b]'}`}>3. Doctors</span>
             </div>
 
+            <div className="mb-4 p-3 bg-[#f4f4f3] rounded-md text-xs text-[#64748b] text-center border border-[#e9e9e7]">
+              Already have an account?{' '}
+              <a href="/login" className="text-[#01696f] font-semibold hover:underline">Sign in here</a>
+            </div>
+
             {step === 1 && (
               <div className="space-y-4">
                 <div>
@@ -518,15 +683,25 @@ export default function DoctorConsole() {
                     <h4 className="font-bold text-sm text-[#01696f]">Doctor #{docIdx + 1}</h4>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-[10px] font-bold text-[#64748b] uppercase">Doctor Name</label>
-                        <input type="text" className="w-full px-3 py-1.5 border border-[#e9e9e7] rounded-md outline-none text-sm shadow-xs" value={doc.name} onChange={(e) => handleDoctorChange(docIdx, 'name', e.target.value)} />
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase">Doctor Name *</label>
+                        <input type="text" required placeholder="Dr. Sharma" className="w-full px-3 py-1.5 border border-[#e9e9e7] rounded-md outline-none text-sm shadow-xs" value={doc.name} onChange={(e) => handleDoctorChange(docIdx, 'name', e.target.value)} />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-[#64748b] uppercase">Speciality</label>
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase">Speciality *</label>
                         <select className="w-full px-3 py-1.5 border border-[#e9e9e7] rounded-md outline-none text-sm shadow-xs" value={doc.speciality} onChange={(e) => handleDoctorChange(docIdx, 'speciality', e.target.value)}>
                           <option value="">Choose...</option>
                           {selectedSpecialities.map(s => <option key={s} value={s}>{s}</option>)}
                         </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase">Email *</label>
+                        <input type="email" required placeholder="dr@clinic.com" className="w-full px-3 py-1.5 border border-[#e9e9e7] rounded-md outline-none text-sm shadow-xs" value={doc.email} onChange={(e) => handleDoctorChange(docIdx, 'email', e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase">Phone</label>
+                        <input type="text" placeholder="9876543210" className="w-full px-3 py-1.5 border border-[#e9e9e7] rounded-md outline-none text-sm shadow-xs" value={doc.phone} onChange={(e) => handleDoctorChange(docIdx, 'phone', e.target.value)} />
                       </div>
                     </div>
                   </div>
@@ -562,6 +737,11 @@ export default function DoctorConsole() {
           <NavItem icon={Calendar} label="Appointments" id="Appointments" />
           <NavItem icon={Users} label="Patients" id="Patients" />
           <NavItem icon={FileBarChart} label="Reports" id="Reports" />
+          <div className="pt-2 border-t border-[#e9e9e7] mt-2">
+            <a href="/dashboard/reception" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c]">
+              <Activity className="h-4 w-4" /> Reception
+            </a>
+          </div>
         </nav>
         <div className="p-4 border-t border-[#e9e9e7]">
           <button 
@@ -669,13 +849,50 @@ export default function DoctorConsole() {
                 
                 <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden">
                   <div className="p-6">
+                    {isOnBreak && (
+                      <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
+                        <Coffee className="h-4 w-4 text-amber-600 shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-sm font-bold text-amber-800">You are on a break</p>
+                          <p className="text-xs text-amber-600 mt-0.5">Queue is paused. Estimated resume: {breakEndTime}</p>
+                        </div>
+                        <button onClick={handleToggleBreak} className="text-xs font-bold text-amber-700 border border-amber-300 px-2.5 py-1 rounded hover:bg-amber-100">Back Online</button>
+                      </div>
+                    )}
+                    {isUnavailableToday && (
+                      <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Ban className="h-5 w-5 text-red-500 shrink-0" />
+                          <div>
+                            <p className="text-sm font-bold text-red-700">Marked Unavailable Today</p>
+                            <p className="text-xs text-red-600 font-light">Patients cannot book appointments with you today. Queue still works.</p>
+                          </div>
+                        </div>
+                        <button onClick={handleToggleAvailability} disabled={isTogglingAvailability}
+                          className="text-xs font-bold text-red-700 border border-red-300 px-3 py-1.5 rounded hover:bg-red-100 cursor-pointer disabled:opacity-50">
+                          {isTogglingAvailability ? '...' : 'Mark Available'}
+                        </button>
+                      </div>
+                    )}
                     {currentPatient ? (
                       <div className="space-y-6">
                         <div className="flex justify-between items-center mb-4">
                           <h2 className="text-lg font-bold text-[#1a202c]">Current Consultation</h2>
-                          {currentPatient.status !== 'IN_CONSULTATION' && (
-                            <span className="text-xs bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full font-semibold border border-amber-200">Paused</span>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {consultElapsed > 0 && (
+                              <span className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full border ${
+                                consultElapsed < 900 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                                consultElapsed < 1800 ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                'bg-red-50 text-red-700 border-red-200 animate-pulse'
+                              }`}>
+                                <Timer className="h-3 w-3" />
+                                {Math.floor(consultElapsed/60).toString().padStart(2,'0')}:{(consultElapsed%60).toString().padStart(2,'0')}
+                              </span>
+                            )}
+                            {currentPatient.status !== 'IN_CONSULTATION' && (
+                              <span className="text-xs bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full font-semibold border border-amber-200">Paused</span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Patient mini-card */}
@@ -708,7 +925,7 @@ export default function DoctorConsole() {
                           </div>
                         </div>
 
-                        <div className="space-y-6">
+                        <div className="space-y-5">
                           <div>
                             <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#64748b] mb-1">Chief Complaint</h4>
                             <p className="text-sm font-medium text-[#1a202c] bg-[#fbfbfa] p-3 rounded-md border border-[#e9e9e7]">
@@ -716,17 +933,72 @@ export default function DoctorConsole() {
                             </p>
                           </div>
 
+                          {/* Last Visit Context */}
+                          {(isLoadingLastVisit || lastVisit) && (
+                            <div className="border border-blue-100 rounded-lg overflow-hidden bg-blue-50/20">
+                              <div className="flex items-center gap-2 px-4 py-2 bg-blue-50/60 border-b border-blue-100">
+                                <History className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                                <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">Last Visit</span>
+                                {lastVisit && <span className="text-[9px] text-blue-500 ml-auto">{new Date(lastVisit.date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</span>}
+                              </div>
+                              {isLoadingLastVisit ? (
+                                <div className="px-4 py-3 animate-pulse space-y-2">
+                                  <div className="h-2.5 bg-blue-100 rounded w-3/4"></div>
+                                  <div className="h-2.5 bg-blue-100 rounded w-1/2"></div>
+                                </div>
+                              ) : lastVisit && (
+                                <div className="px-4 py-3 space-y-1.5 text-xs">
+                                  {lastVisit.chiefComplaint && <p className="text-[#64748b]"><span className="font-semibold text-[#1a202c]">Complaint:</span> {lastVisit.chiefComplaint}</p>}
+                                  {lastVisit.notes && <p className="text-[#64748b] line-clamp-3 whitespace-pre-wrap"><span className="font-semibold text-[#1a202c]">Notes:</span> {lastVisit.notes}</p>}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           <div>
                             <div className="flex justify-between items-end mb-2">
-                              <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">Consultation Notes / Prescription</h4>
+                              <div className="flex items-center gap-3">
+                                <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">Consultation Notes / Prescription</h4>
+                                <button type="button" onClick={() => setShowTemplates(v => !v)}
+                                  className="flex items-center gap-1 text-[9px] font-bold text-[#01696f] border border-[#01696f]/20 bg-[#e6f3f4] px-2 py-0.5 rounded hover:bg-[#d1ecee] transition-colors">
+                                  <Zap className="h-2.5 w-2.5" /> Templates
+                                </button>
+                              </div>
                               <VoiceDictation onResult={(text) => setConsultNotes(prev => prev ? `${prev} ${text}` : text)} />
                             </div>
+                            {showTemplates && (
+                              <div className="mb-2 flex flex-wrap gap-1.5 p-3 bg-[#fbfbfa] border border-[#e9e9e7] rounded-lg">
+                                {(PRESCRIPTION_TEMPLATES[speciality] || PRESCRIPTION_TEMPLATES.default).map(t => (
+                                  <button key={t.label} type="button"
+                                    onClick={() => { setConsultNotes(t.text); setShowTemplates(false); showToast(`Template "${t.label}" applied.`, 'success'); }}
+                                    className="text-[10px] font-semibold text-[#1a202c] bg-white border border-[#e9e9e7] px-2.5 py-1 rounded hover:border-[#01696f] hover:text-[#01696f] transition-colors shadow-xs">
+                                    {t.label}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                             <textarea
                               value={consultNotes}
                               onChange={(e) => setConsultNotes(e.target.value)}
                               placeholder="Type or dictate patient observations, diagnosis, and prescribed medications here..."
                               className="w-full h-40 p-4 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f] resize-none text-sm leading-relaxed shadow-inner"
                             ></textarea>
+                          </div>
+
+                          <div className="flex items-center gap-3 pt-2 border-t border-[#e9e9e7]">
+                            <label className="text-[10px] text-[#64748b] font-semibold uppercase tracking-wider whitespace-nowrap flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Follow-up Date
+                            </label>
+                            <input
+                              type="date"
+                              value={followUpDate}
+                              onChange={(e) => setFollowUpDate(e.target.value)}
+                              min={new Date().toISOString().split('T')[0]}
+                              className="px-2 py-1 text-xs border border-[#e9e9e7] rounded focus:outline-none focus:border-[#01696f] bg-white"
+                            />
+                            {followUpDate && (
+                              <button type="button" onClick={() => setFollowUpDate('')} className="text-[10px] text-red-500 hover:text-red-700">Clear</button>
+                            )}
                           </div>
 
                           <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
@@ -742,6 +1014,19 @@ export default function DoctorConsole() {
                                 className="px-4 py-2 border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold uppercase tracking-wider rounded-md flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
                               >
                                 <ShieldAlert className="h-3.5 w-3.5" /> No-Show
+                              </button>
+                              <button
+                                onClick={handleToggleBreak}
+                                className={`px-4 py-2 border text-xs font-bold uppercase tracking-wider rounded-md flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${isOnBreak ? 'border-[#01696f] bg-[#e6f3f4] text-[#01696f]' : 'border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600'}`}
+                              >
+                                <Coffee className="h-3.5 w-3.5" /> {isOnBreak ? 'End Break' : 'Break'}
+                              </button>
+                              <button
+                                onClick={handleToggleAvailability}
+                                disabled={isTogglingAvailability}
+                                className={`px-4 py-2 border text-xs font-bold uppercase tracking-wider rounded-md flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50 ${isUnavailableToday ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600'}`}
+                              >
+                                <Ban className="h-3.5 w-3.5" /> {isUnavailableToday ? 'Available' : 'Day Off'}
                               </button>
                             </div>
 
@@ -772,12 +1057,28 @@ export default function DoctorConsole() {
                         <p className="text-sm text-[#64748b] mt-2 max-w-sm mx-auto font-light leading-relaxed">
                           You are not currently in a consultation. Pull the next waiting patient from the queue to begin.
                         </p>
-                        <button
-                          onClick={handleCallNext}
-                          className="mt-8 px-6 py-3 bg-[#01696f] hover:bg-[#005459] text-white text-sm font-bold shadow-md rounded-md transition-all cursor-pointer flex items-center gap-2"
-                        >
-                          Call Next Patient <ChevronRight className="h-4 w-4" />
-                        </button>
+                        <div className="mt-8 flex items-center gap-3">
+                          <button
+                            onClick={handleCallNext}
+                            disabled={isOnBreak}
+                            className="px-6 py-3 bg-[#01696f] hover:bg-[#005459] text-white text-sm font-bold shadow-md rounded-md transition-all cursor-pointer flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Call Next Patient <ChevronRight className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={handleToggleBreak}
+                            className={`px-4 py-3 border text-sm font-bold rounded-md flex items-center gap-2 cursor-pointer transition-all ${isOnBreak ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-[#e9e9e7] bg-white text-[#64748b] hover:bg-[#f4f4f3]'}`}
+                          >
+                            <Coffee className="h-4 w-4" /> {isOnBreak ? 'End Break' : 'Take Break'}
+                          </button>
+                          <button
+                            onClick={handleToggleAvailability}
+                            disabled={isTogglingAvailability}
+                            className={`px-4 py-2 border text-xs font-bold uppercase tracking-wider rounded-md flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50 ${isUnavailableToday ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600'}`}
+                          >
+                            <Ban className="h-3.5 w-3.5" /> {isUnavailableToday ? 'Available' : 'Day Off'}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -813,7 +1114,8 @@ export default function DoctorConsole() {
                         )}
                         <button
                           onClick={handleCallNext}
-                          className="w-full py-2.5 bg-white hover:bg-[#f4f4f3] text-xs font-bold uppercase tracking-wider rounded-md border border-[#e9e9e7] transition-all flex items-center justify-center gap-1 text-[#01696f] cursor-pointer shadow-xs"
+                          disabled={!nextPatient}
+                          className="w-full py-2.5 bg-white hover:bg-[#f4f4f3] text-xs font-bold uppercase tracking-wider rounded-md border border-[#e9e9e7] transition-all flex items-center justify-center gap-1 text-[#01696f] cursor-pointer shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           Start Next Consult <ChevronRight className="h-4 w-4" />
                         </button>
@@ -862,6 +1164,71 @@ export default function DoctorConsole() {
                     </div>
                   </div>
                 </div>
+
+                {/* Upcoming Follow-ups Widget */}
+                {followUps.length > 0 && (
+                  <div className="bg-white border border-[#e9e9e7] rounded-lg p-4 shadow-xs">
+                    <h3 className="text-xs font-semibold uppercase text-[#64748b] tracking-wider mb-3 flex items-center gap-1.5">
+                      <Calendar className="h-3.5 w-3.5 text-[#01696f]" /> Upcoming Follow-ups ({followUps.length})
+                    </h3>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {followUps.slice(0, 6).map((fu: any) => (
+                        <div key={fu.id} className="flex items-center justify-between p-2 bg-[#fbfbfa] border border-[#e9e9e7] rounded text-xs">
+                          <div>
+                            <span className="font-semibold text-[#1a202c]">{fu.patient?.name}</span>
+                            <span className="text-[#64748b] ml-2">{fu.patient?.phone}</span>
+                            <p className="text-[10px] text-[#64748b] mt-0.5 truncate max-w-[200px]">{fu.chiefComplaint || 'No complaint noted'}</p>
+                          </div>
+                          <div className="text-right shrink-0 ml-3">
+                            <span className="font-mono text-[#01696f] font-bold">{fu.followUpDate}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Full Waiting Queue List */}
+                <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden">
+                  <div className="px-5 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa] flex items-center justify-between">
+                    <h3 className="text-xs font-bold uppercase text-[#64748b] tracking-wider">Full Queue</h3>
+                    <span className="text-[10px] bg-[#e6f3f4] text-[#01696f] px-2 py-0.5 rounded-full font-bold border border-[#01696f]/20">
+                      {activeQueue.filter(t => t.status === 'WAITING').length} waiting
+                    </span>
+                  </div>
+                  <div className="divide-y divide-[#e9e9e7] max-h-72 overflow-y-auto">
+                    {activeQueue.length === 0 ? (
+                      <p className="text-xs text-[#64748b] text-center py-6 font-medium">Queue is empty.</p>
+                    ) : (
+                      activeQueue.map((token, idx) => (
+                        <div key={token.id} className={`px-4 py-3 flex items-center justify-between gap-3 hover:bg-[#fbfbfa] transition-colors ${token.status === 'IN_CONSULTATION' ? 'bg-[#e6f3f4]/30' : ''}`}>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="text-[10px] font-bold text-[#64748b] w-4 shrink-0">{idx + 1}</span>
+                            <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded shrink-0 ${token.status === 'IN_CONSULTATION' ? 'bg-[#01696f] text-white' : 'bg-[#e6f3f4] text-[#01696f]'}`}>
+                              {token.tokenNo}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-semibold text-[#1a202c] truncate">{token.patientName}</p>
+                                {token.appointmentId
+                                  ? <span className="text-[7px] bg-blue-50 text-blue-600 border border-blue-200 px-1 py-0.5 rounded font-bold uppercase shrink-0">Booked</span>
+                                  : <span className="text-[7px] bg-gray-50 text-gray-500 border border-gray-200 px-1 py-0.5 rounded font-bold uppercase shrink-0">Walk-in</span>
+                                }
+                              </div>
+                              <p className="text-[9px] text-[#64748b] truncate">{token.chiefComplaint || token.visitType}</p>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                              token.type === 'EMERGENCY' ? 'bg-red-50 text-red-600' : token.type === 'PRIORITY' ? 'bg-amber-50 text-amber-700' : 'bg-gray-50 text-gray-600'
+                            }`}>{token.type}</span>
+                            <p className="text-[9px] text-[#64748b] mt-0.5">{token.status === 'IN_CONSULTATION' ? 'Serving' : `~${token.estimatedWait}m`}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -869,11 +1236,17 @@ export default function DoctorConsole() {
           {/* APPOINTMENTS TAB */}
           {activeTab === 'Appointments' && (
             <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden animate-in fade-in duration-300">
-              <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa] flex justify-between items-center">
-                <h2 className="font-semibold text-lg">Today's Scheduled Appointments</h2>
-                <span className="text-xs font-semibold bg-[#e6f3f4] text-[#01696f] px-3 py-1 rounded-full">
-                  {appointmentsList.filter(a => a.status === 'BOOKED').length} Booked Today
-                </span>
+              <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa] flex flex-wrap justify-between items-center gap-3">
+                <h2 className="font-semibold text-lg">Today's Appointments</h2>
+                <div className="flex items-center gap-1.5">
+                  {(['ALL','BOOKED','CHECKED_IN','CANCELLED'] as const).map(f => (
+                    <button key={f} onClick={() => setApptFilter(f)}
+                      className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${apptFilter === f ? 'bg-[#01696f] text-white border-[#01696f]' : 'bg-white text-[#64748b] border-[#e9e9e7] hover:border-[#01696f]'}`}
+                    >
+                      {f === 'ALL' ? `All (${appointmentsList.length})` : f === 'BOOKED' ? `Booked (${appointmentsList.filter(a=>a.status==='BOOKED').length})` : f === 'CHECKED_IN' ? `Checked In (${appointmentsList.filter(a=>a.status==='CHECKED_IN').length})` : `Cancelled (${appointmentsList.filter(a=>a.status==='CANCELLED').length})`}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -888,12 +1261,12 @@ export default function DoctorConsole() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#e9e9e7]">
-                    {appointmentsList.length === 0 ? (
+                    {appointmentsList.filter(a => apptFilter === 'ALL' || a.status === apptFilter).length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-6 py-8 text-center text-[#64748b]">No scheduled appointments for today.</td>
+                        <td colSpan={6} className="px-6 py-8 text-center text-[#64748b]">No {apptFilter === 'ALL' ? '' : apptFilter.toLowerCase().replace('_',' ')} appointments for today.</td>
                       </tr>
                     ) : (
-                      appointmentsList.map((app) => (
+                      appointmentsList.filter(a => apptFilter === 'ALL' || a.status === apptFilter).map((app) => (
                         <tr key={app.id} className="hover:bg-[#fbfbfa] transition-colors">
                           <td className="px-6 py-4 font-bold text-[#01696f] flex items-center gap-1.5">
                             <Clock className="h-3.5 w-3.5 text-[#64748b]" /> {app.timeSlot}
@@ -921,13 +1294,22 @@ export default function DoctorConsole() {
                           <td className="px-6 py-4 text-right">
                             <div className="flex gap-2 justify-end">
                               {app.status === 'BOOKED' && (
-                                <button
-                                  onClick={() => handleCheckIn(app)}
-                                  disabled={isCheckingIn === app.id}
-                                  className="text-xs font-bold text-white bg-[#01696f] hover:bg-[#005459] px-3 py-1.5 rounded shadow-sm disabled:opacity-50 transition-all flex items-center gap-1 cursor-pointer"
-                                >
-                                  {isCheckingIn === app.id ? 'Checking In...' : 'Check-in'}
-                                </button>
+                                <>
+                                  <button
+                                    onClick={() => handleCheckIn(app)}
+                                    disabled={isCheckingIn === app.id}
+                                    className="text-xs font-bold text-white bg-[#01696f] hover:bg-[#005459] px-3 py-1.5 rounded shadow-sm disabled:opacity-50 transition-all flex items-center gap-1 cursor-pointer"
+                                  >
+                                    {isCheckingIn === app.id ? 'Checking In...' : 'Check-in'}
+                                  </button>
+                                  <button
+                                    onClick={() => handleCancelAppointment(app.id)}
+                                    disabled={isCancellingAppt === app.id}
+                                    className="text-xs font-semibold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 px-3 py-1.5 rounded shadow-sm disabled:opacity-50 transition-all flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Ban className="h-3 w-3" /> {isCancellingAppt === app.id ? 'Cancelling...' : 'Cancel'}
+                                  </button>
+                                </>
                               )}
                               <button
                                 onClick={() => handleViewHistoryByPhone(app.patient?.phone, app.patient?.name)}
@@ -1017,14 +1399,33 @@ export default function DoctorConsole() {
 
           {/* REPORTS TAB */}
           {activeTab === 'Reports' && (
-            <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden animate-in fade-in duration-300">
-              <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa]">
-                <h2 className="font-semibold text-lg">Analytics & Reports</h2>
+            <div className="space-y-6 animate-in fade-in duration-300">
+              <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs p-8 text-center">
+                <FileBarChart className="h-12 w-12 text-[#01696f] mx-auto mb-4" />
+                <h3 className="font-serif text-xl font-bold text-[#1a202c]">Full Analytics Dashboard</h3>
+                <p className="text-sm text-[#64748b] mt-2 max-w-sm mx-auto">View 7-day patient volumes, wait time trends, doctor efficiency reports, peak hours heatmap, and AI insights.</p>
+                <a
+                  href="/dashboard/analytics"
+                  className="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-[#01696f] text-white font-bold rounded-md hover:bg-[#005459] transition-all shadow-md text-sm"
+                >
+                  Open Analytics Dashboard <ChevronRight className="h-4 w-4" />
+                </a>
               </div>
-              <div className="p-8 text-center">
-                <FileBarChart className="h-12 w-12 text-[#e9e9e7] mx-auto mb-3" />
-                <h3 className="font-medium text-[#1a202c]">Analytics Dashboard</h3>
-                <p className="text-sm text-[#64748b] mt-1">Detailed reports will be generated once you have enough data.</p>
+
+              {/* Quick stats from today */}
+              <div className="grid grid-cols-3 gap-6">
+                <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 shadow-xs text-center">
+                  <span className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider block">Served Today</span>
+                  <span className="text-3xl font-bold text-[#1a202c] mt-2 block">{servedToday.length}</span>
+                </div>
+                <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 shadow-xs text-center">
+                  <span className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider block">Avg Consult</span>
+                  <span className="text-3xl font-bold text-[#01696f] mt-2 block">{performanceStats.avgConsultTime}m</span>
+                </div>
+                <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 shadow-xs text-center">
+                  <span className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider block">No-Show Rate</span>
+                  <span className="text-3xl font-bold text-red-500 mt-2 block">{performanceStats.noshowRate}%</span>
+                </div>
               </div>
             </div>
           )}
@@ -1230,6 +1631,7 @@ export default function DoctorConsole() {
         </div>
       )}
 
+      {ToastComponent}
       </div>
     );
   }

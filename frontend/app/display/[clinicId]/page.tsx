@@ -3,7 +3,7 @@
 import React, { use, useState, useEffect } from 'react';
 import { apiRequest, BACKEND_URL } from '../../../src/utils/api';
 import io from 'socket.io-client';
-import { Tv, Activity, Clock, Volume2, Calendar } from 'lucide-react';
+import { Tv, Activity, Clock, Volume2, Calendar, Coffee } from 'lucide-react';
 
 interface DisplayParams {
   clinicId: string;
@@ -17,6 +17,7 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
   const [branchId, setBranchId] = useState('');
   const [activeQueue, setActiveQueue] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [liveTime, setLiveTime] = useState('');
   
   // Announcement ticker
   const [tickerIndex, setTickerIndex] = useState(0);
@@ -30,6 +31,9 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
   // Visual called chime overlay
   const [calledAlert, setCalledAlert] = useState<{ tokenNo: string; doctorName: string } | null>(null);
 
+  // Doctor break status: map of doctorId -> { doctorName, resumeAt }
+  const [breakStatus, setBreakStatus] = useState<Map<string, { doctorName: string; resumeAt: string | null }>>(new Map());
+
   // 1. Fetch clinic details & initialize queue
   useEffect(() => {
     async function loadTVDetails() {
@@ -41,10 +45,13 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
         if (firstBranch) {
           setBranchId(firstBranch.id);
           
-          // Rebuild active tokens for all doctors at this branch
+          // Rebuild active tokens for all doctors at this branch (deduplicated by doctor)
+          const seenDoctors = new Set<string>();
           const activeList: any[] = [];
           for (const sched of firstBranch.schedules) {
-            const queueData = await apiRequest(`/queues/${firstBranch.id}/live?doctorId={sched.doctor.id}`);
+            if (seenDoctors.has(sched.doctor.id)) continue;
+            seenDoctors.add(sched.doctor.id);
+            const queueData = await apiRequest(`/queues/${firstBranch.id}/live?doctorId=${sched.doctor.id}`);
             activeList.push(...(queueData.active || []));
           }
           setActiveQueue(activeList);
@@ -72,8 +79,11 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
     socket.on('queue:updated', async () => {
       if (!clinicData) return;
       try {
+        const seenDoctors = new Set<string>();
         const activeList: any[] = [];
         for (const sched of clinicData.branches[0].schedules) {
+          if (seenDoctors.has(sched.doctor.id)) continue;
+          seenDoctors.add(sched.doctor.id);
           const queueData = await apiRequest(`/queues/${branchId}/live?doctorId=${sched.doctor.id}`);
           activeList.push(...(queueData.active || []));
         }
@@ -81,6 +91,18 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
       } catch (err) {
         console.error(err);
       }
+    });
+
+    socket.on('doctor:break', (data: { doctorId: string; doctorName: string; onBreak: boolean; resumeAt: string | null }) => {
+      setBreakStatus(prev => {
+        const next = new Map(prev);
+        if (data.onBreak) {
+          next.set(data.doctorId, { doctorName: data.doctorName, resumeAt: data.resumeAt });
+        } else {
+          next.delete(data.doctorId);
+        }
+        return next;
+      });
     });
 
     socket.on('token:called', (data: { tokenNo: string; doctorName: string }) => {
@@ -127,6 +149,16 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
     return () => clearInterval(timer);
   }, []);
 
+  // Live clock
+  useEffect(() => {
+    const updateClock = () => {
+      setLiveTime(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    };
+    updateClock();
+    const timer = setInterval(updateClock, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center font-mono text-sm">
@@ -138,6 +170,12 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
   // Filter queue tokens
   const servingTokens = activeQueue.filter(t => t.status === 'IN_CONSULTATION');
   const waitingTokens = activeQueue.filter(t => t.status === 'WAITING').slice(0, 4);
+
+  // Unique doctors on break (not currently serving)
+  const breakDoctors = Array.from(breakStatus.entries())
+    .filter(([doctorId]) => !servingTokens.some((t: any) => t.doctorId === doctorId));
+
+  const hasAnyActivity = servingTokens.length > 0 || breakDoctors.length > 0;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none overflow-hidden">
@@ -156,11 +194,17 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-slate-400">
-          <Calendar className="h-5 w-5" />
-          <span className="text-lg font-mono">
-            {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-          </span>
+        <div className="flex items-center gap-6 text-slate-400">
+          <div className="flex items-center gap-2">
+            <Calendar className="h-5 w-5" />
+            <span className="text-lg font-mono">
+              {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Clock className="h-5 w-5" />
+            <span className="text-xl font-mono font-bold text-slate-200">{liveTime}</span>
+          </div>
         </div>
       </header>
 
@@ -174,7 +218,7 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
               Now Serving / Chamber Status
             </h2>
             
-            {servingTokens.length === 0 ? (
+            {!hasAnyActivity ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center py-20 text-slate-500 font-light">
                 <Activity className="h-12 w-12 opacity-20 mb-4 text-[#01696f]" />
                 <p className="text-lg">No active consultations in progress.</p>
@@ -183,8 +227,8 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
             ) : (
               <div className="grid md:grid-cols-2 gap-6">
                 {servingTokens.map((token: any) => (
-                  <div 
-                    key={token.id} 
+                  <div
+                    key={token.id}
                     className="bg-slate-950 border border-slate-800 p-8 rounded-lg text-center flex flex-col justify-between space-y-4 animate-pulse"
                   >
                     <div>
@@ -203,6 +247,33 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
 
                     <div>
                       <span className="text-xs text-slate-400 font-light block">{token.patientName}</span>
+                    </div>
+                  </div>
+                ))}
+
+                {breakDoctors.map(([doctorId, info]) => (
+                  <div
+                    key={doctorId}
+                    className="bg-amber-950/30 border border-amber-800/50 p-8 rounded-lg text-center flex flex-col justify-between space-y-4"
+                  >
+                    <div>
+                      <span className="text-xs text-amber-500/70 font-semibold uppercase tracking-wider block">Chamber Doctor</span>
+                      <span className="text-lg font-bold text-amber-200 block mt-1">
+                        Dr. {info.doctorName}
+                      </span>
+                    </div>
+
+                    <div className="py-6 border-t border-b border-amber-800/40 flex flex-col items-center gap-3">
+                      <Coffee className="h-10 w-10 text-amber-400 opacity-80" />
+                      <span className="text-2xl font-semibold text-amber-300 tracking-wide">On Break</span>
+                    </div>
+
+                    <div>
+                      {info.resumeAt && (
+                        <span className="text-xs text-amber-400/70 font-light block">
+                          Resumes at approx. {info.resumeAt}
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -255,8 +326,12 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
         <div className="bg-[#01696f] text-white px-3 py-1 text-xs uppercase font-bold tracking-wider rounded mr-6 shrink-0 flex items-center gap-1.5">
           <Activity className="h-3.5 w-3.5" /> Notice
         </div>
-        <div className="flex-1 relative h-6 overflow-hidden">
-          <p className="absolute inset-0 text-slate-300 text-sm font-light transition-all duration-700 ease-in-out">
+        <div className="flex-1 overflow-hidden">
+          <p
+            key={tickerIndex}
+            className="text-slate-300 text-sm font-light whitespace-nowrap"
+            style={{ animation: 'ticker-slide 12s linear forwards' }}
+          >
             {announcements[tickerIndex]}
           </p>
         </div>

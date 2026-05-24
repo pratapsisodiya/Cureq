@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticateToken, requireRole } from '../middleware/auth.middleware';
+import { createAuditLog } from './features.routes';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -143,10 +144,42 @@ router.post('/:id/branches', authenticateToken, requireRole(['CLINIC_ADMIN']), a
       },
     });
 
+    await createAuditLog(clinicId, 'BRANCH_CREATED', `New branch "${name}" added at ${address}`);
+
     res.status(201).json({ branch });
   } catch (err) {
     console.error('Create branch error:', err);
     res.status(500).json({ error: 'Server error creating branch.' });
+  }
+});
+
+/**
+ * @route   PUT /api/clinics/:id/profile
+ * @desc    Update clinic name and speciality
+ */
+router.put('/:id/profile', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+  const { name, speciality } = req.body;
+  const clinicId = req.params.id;
+
+  if (!name) {
+    return res.status(400).json({ error: 'Clinic name is required.' });
+  }
+
+  try {
+    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } });
+    if (!clinic || clinic.adminId !== (req as any).user.id) {
+      return res.status(403).json({ error: 'Forbidden.' });
+    }
+
+    const updated = await prisma.clinic.update({
+      where: { id: clinicId },
+      data: { name, speciality: speciality || clinic.speciality },
+    });
+
+    res.json({ clinic: updated });
+  } catch (err) {
+    console.error('Update clinic profile error:', err);
+    res.status(500).json({ error: 'Server error updating clinic profile.' });
   }
 });
 
@@ -213,6 +246,134 @@ router.put('/:id/branches/:branchId/seats', authenticateToken, requireRole(['CLI
   } catch (err) {
     console.error('Update branch seats error:', err);
     res.status(500).json({ error: 'Server error updating seats capacity.' });
+  }
+});
+
+/**
+ * @route   POST /api/clinics/:id/doctors
+ * @desc    Add a new doctor to the clinic (creates User + DoctorProfile + DoctorSchedule)
+ */
+router.post('/:id/doctors', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+  const { name, email, password, phone, speciality, branchId, schedules } = req.body;
+  const clinicId = req.params.id;
+
+  if (!name || !email || !password || !speciality || !branchId) {
+    return res.status(400).json({ error: 'Name, email, password, speciality, and branchId are required.' });
+  }
+
+  try {
+    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } });
+    if (!clinic || clinic.adminId !== (req as any).user.id) {
+      return res.status(403).json({ error: 'Forbidden.' });
+    }
+
+    const limitCheck = await verifyPlanLimits(clinicId, 'doctors');
+    if (!limitCheck.allowed) {
+      return res.status(402).json({ error: limitCheck.message });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return res.status(400).json({ error: 'A user with this email already exists.' });
+    }
+
+    const bcrypt = require('bcryptjs');
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        phone: phone || null,
+        password: hashedPassword,
+        role: 'DOCTOR',
+      },
+    });
+
+    const doctorProfile = await prisma.doctorProfile.create({
+      data: { userId: user.id, speciality },
+    });
+
+    if (schedules && Array.isArray(schedules) && schedules.length > 0) {
+      await prisma.doctorSchedule.createMany({
+        data: schedules.map((s: any) => ({
+          doctorId: doctorProfile.id,
+          branchId,
+          dayOfWeek: parseInt(s.dayOfWeek),
+          startTime: s.startTime || '09:00',
+          endTime: s.endTime || '17:00',
+          slotDuration: parseInt(s.slotDuration) || 15,
+          maxPatients: parseInt(s.maxPatients) || 30,
+          bufferTime: parseInt(s.bufferTime) || 5,
+          active: true,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    await createAuditLog(clinicId, 'DOCTOR_ADDED', `Dr. ${name} (${speciality}) added to clinic`);
+
+    res.status(201).json({ message: 'Doctor added successfully.', doctorId: doctorProfile.id, userId: user.id });
+  } catch (err: any) {
+    console.error('Add doctor error:', err);
+    res.status(500).json({ error: 'Server error adding doctor.' });
+  }
+});
+
+/**
+ * @route   PUT /api/clinics/:id/doctors/:doctorId/schedule
+ * @desc    Upsert doctor schedule for a branch
+ */
+router.put('/:id/doctors/:doctorId/schedule', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+  const { branchId, schedules } = req.body;
+  const clinicId = req.params.id;
+  const { doctorId } = req.params;
+
+  if (!branchId || !schedules || !Array.isArray(schedules)) {
+    return res.status(400).json({ error: 'branchId and schedules array are required.' });
+  }
+
+  try {
+    const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } });
+    if (!clinic || clinic.adminId !== (req as any).user.id) {
+      return res.status(403).json({ error: 'Forbidden.' });
+    }
+
+    for (const s of schedules) {
+      await prisma.doctorSchedule.upsert({
+        where: {
+          doctorId_branchId_dayOfWeek: {
+            doctorId,
+            branchId,
+            dayOfWeek: parseInt(s.dayOfWeek),
+          },
+        },
+        update: {
+          startTime: s.startTime,
+          endTime: s.endTime,
+          slotDuration: parseInt(s.slotDuration) || 15,
+          maxPatients: parseInt(s.maxPatients) || 30,
+          bufferTime: parseInt(s.bufferTime) || 5,
+          active: s.active !== false,
+        },
+        create: {
+          doctorId,
+          branchId,
+          dayOfWeek: parseInt(s.dayOfWeek),
+          startTime: s.startTime,
+          endTime: s.endTime,
+          slotDuration: parseInt(s.slotDuration) || 15,
+          maxPatients: parseInt(s.maxPatients) || 30,
+          bufferTime: parseInt(s.bufferTime) || 5,
+          active: s.active !== false,
+        },
+      });
+    }
+
+    res.json({ message: 'Doctor schedule updated successfully.' });
+  } catch (err: any) {
+    console.error('Update schedule error:', err);
+    res.status(500).json({ error: 'Server error updating schedule.' });
   }
 });
 

@@ -12,6 +12,7 @@ import appointmentRoutes from './routes/appointment.routes';
 import patientRoutes from './routes/patient.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import notificationRoutes from './routes/notification.routes';
+import featuresRouter from './routes/features.routes';
 
 // Socket setup
 import { setupQueueSockets } from './sockets/queue.socket';
@@ -50,6 +51,7 @@ app.use('/api/appointments', appointmentRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/features', featuresRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

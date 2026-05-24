@@ -67,8 +67,7 @@ router.get('/:clinicId', authenticateToken, async (req, res) => {
         where: {
           branch: { clinicId },
           status: 'SERVED',
-          startTime: { not: null as any },
-          checkInTime: { not: null as any },
+          startTime: { not: null },
           createdAt: { gte: dayStart, lte: dayEnd },
         },
         select: { checkInTime: true, startTime: true },

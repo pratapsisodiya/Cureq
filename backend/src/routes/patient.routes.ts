@@ -37,6 +37,36 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/patients/followups
+ * @desc    Get upcoming follow-up patients for a doctor (based on VisitLog.followUpDate)
+ */
+router.get('/followups', authenticateToken, async (req, res) => {
+  const { doctorId } = req.query;
+  if (!doctorId) return res.status(400).json({ error: 'doctorId required.' });
+  try {
+    const logs = await prisma.visitLog.findMany({
+      where: {
+        followUpDate: { not: null },
+        patient: {
+          tokens: {
+            some: { doctorId: doctorId as string }
+          }
+        }
+      },
+      orderBy: { followUpDate: 'asc' },
+      take: 20,
+      include: {
+        patient: { select: { id: true, name: true, phone: true } },
+      },
+    });
+    res.json({ followUps: logs });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error fetching follow-ups.' });
+  }
+});
+
+/**
  * @route   GET /api/patients/:phone
  * @desc    Receptionist patient search by phone (lookup for fast walk-in check-in)
  */

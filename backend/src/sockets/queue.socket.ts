@@ -60,3 +60,15 @@ export function broadcastTokenCalled(io: Server, branchId: string, tokenNo: stri
     doctorName,
   });
 }
+
+/**
+   * Helper to broadcast doctor break status to TV displays and reception
+   */
+export function broadcastDoctorBreak(io: Server, branchId: string, doctorId: string, doctorName: string, onBreak: boolean, resumeAt: string | null) {
+  io.to(`branch:${branchId}`).emit('doctor:break', {
+    doctorId,
+    doctorName,
+    onBreak,
+    resumeAt,
+  });
+}

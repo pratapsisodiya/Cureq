@@ -7,14 +7,24 @@ export interface TokenItem {
   tokenNo: string;
   patientName: string;
   patientPhone: string;
+  patientId: string | null;
+  appointmentId: string | null;
   type: 'GENERAL' | 'PRIORITY' | 'EMERGENCY';
   visitType: 'NEW' | 'FOLLOW_UP' | 'EMERGENCY';
   status: 'WAITING' | 'IN_CONSULTATION' | 'SERVED' | 'SKIPPED' | 'NO_SHOW';
   chiefComplaint: string | null;
+  notes: string | null;
   estimatedWait: number;
   checkInTime: string;
+  startTime: string | null;
   queueOrder: number;
   seatStatus: 'SEATED' | 'WAITING_OUTSIDE';
+  consultationFee?: number | null;
+}
+
+export interface DoctorBreakInfo {
+  doctorName: string;
+  resumeAt: string | null;
 }
 
 interface QueueState {
@@ -22,10 +32,11 @@ interface QueueState {
   servedToday: TokenItem[];
   skippedToday: TokenItem[];
   noShowToday: TokenItem[];
-  
+
   socket: Socket | null;
   lastCalledToken: { tokenNo: string; doctorName: string } | null;
   broadcastAlert: string | null;
+  doctorBreakStatus: Record<string, DoctorBreakInfo>;
   loading: boolean;
   error: string | null;
 
@@ -34,7 +45,7 @@ interface QueueState {
   disconnectSocket: () => void;
   
   // Doctor operations
-  callNext: (branchId: string, doctorId: string, notes?: string) => Promise<void>;
+  callNext: (branchId: string, doctorId: string, notes?: string, followUpDate?: string) => Promise<void>;
   skipToken: (branchId: string, doctorId: string, tokenId: string) => Promise<void>;
   markNoShow: (branchId: string, doctorId: string, tokenId: string) => Promise<void>;
   recallToken: (branchId: string, tokenNo: string, doctorName: string) => Promise<void>;
@@ -51,6 +62,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   socket: null,
   lastCalledToken: null,
   broadcastAlert: null,
+  doctorBreakStatus: {},
   loading: false,
   error: null,
 
@@ -115,6 +127,18 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       setTimeout(() => set({ broadcastAlert: null }), 15000);
     });
 
+    newSocket.on('doctor:break', (data: { doctorId: string; doctorName: string; onBreak: boolean; resumeAt: string | null }) => {
+      set(state => {
+        const updated = { ...state.doctorBreakStatus };
+        if (data.onBreak) {
+          updated[data.doctorId] = { doctorName: data.doctorName, resumeAt: data.resumeAt };
+        } else {
+          delete updated[data.doctorId];
+        }
+        return { doctorBreakStatus: updated };
+      });
+    });
+
     set({ socket: newSocket });
   },
 
@@ -126,11 +150,11 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     }
   },
 
-  callNext: async (branchId, doctorId, notes) => {
+  callNext: async (branchId, doctorId, notes, followUpDate) => {
     try {
       await apiRequest(`/queues/${branchId}/next`, {
         method: 'POST',
-        body: JSON.stringify({ doctorId, notes }),
+        body: JSON.stringify({ doctorId, notes, followUpDate: followUpDate || null }),
       });
       // Rest of state is synchronized in the queue:updated event callback
     } catch (err: any) {

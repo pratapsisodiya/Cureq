@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { PrismaClient, TokenStatus, TokenType, VisitType, SeatStatus } from '@prisma/client';
 import { queueCache } from '../services/cache.service';
 import { aiService } from '../services/ai.service';
-import { broadcastQueueUpdate, broadcastTokenCalled, broadcastTokenUpdate } from '../sockets/queue.socket';
+import { broadcastQueueUpdate, broadcastTokenCalled, broadcastTokenUpdate, broadcastDoctorBreak } from '../sockets/queue.socket';
+import { createAuditLog } from './features.routes';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -93,12 +94,16 @@ async function recalculateQueueETAs(branchId: string, doctorId: string, io: any)
       tokenNo: t.tokenNo,
       patientName: t.patientName,
       patientPhone: t.patientPhone,
+      patientId: t.patientId,
+      appointmentId: t.appointmentId,
       type: t.type,
       visitType: t.visitType,
       status: t.status,
       chiefComplaint: t.chiefComplaint,
+      notes: t.notes,
       estimatedWait: t.estimatedWait,
       checkInTime: t.checkInTime.toISOString(),
+      startTime: t.startTime ? t.startTime.toISOString() : null,
       queueOrder: t.queueOrder,
       seatStatus: t.seatStatus,
     }));
@@ -193,12 +198,16 @@ export async function promoteWaitingOutsidePatients(branchId: string, io: any) {
         tokenNo: t.tokenNo,
         patientName: t.patientName,
         patientPhone: t.patientPhone,
+        patientId: t.patientId,
+        appointmentId: t.appointmentId,
         type: t.type,
         visitType: t.visitType,
         status: t.status,
         chiefComplaint: t.chiefComplaint,
+        notes: t.notes,
         estimatedWait: t.estimatedWait,
         checkInTime: t.checkInTime.toISOString(),
+        startTime: t.startTime ? t.startTime.toISOString() : null,
         queueOrder: t.queueOrder,
         seatStatus: t.seatStatus,
       }));
@@ -220,7 +229,7 @@ export async function promoteWaitingOutsidePatients(branchId: string, io: any) {
  */
 router.post('/:branchId/token', async (req, res) => {
   const { branchId } = req.params;
-  const { doctorId, patientPhone, patientName, type, visitType, chiefComplaint, appointmentId } = req.body;
+  const { doctorId, patientPhone, patientName, type, visitType, chiefComplaint, appointmentId, patientId } = req.body;
 
   if (!doctorId || !patientPhone || !patientName) {
     return res.status(400).json({ error: 'Missing doctor, patient name, or patient phone.' });
@@ -301,7 +310,7 @@ router.post('/:branchId/token', async (req, res) => {
         estimatedWait: eta,
         patientPhone,
         patientName,
-        patientId: patientUser ? patientUser.id : null,
+        patientId: patientId || (patientUser ? patientUser.id : null),
         doctorId,
         branchId,
         appointmentId: appointmentId || null,
@@ -323,12 +332,16 @@ router.post('/:branchId/token', async (req, res) => {
       tokenNo: token.tokenNo,
       patientName: token.patientName,
       patientPhone: token.patientPhone,
+      patientId: token.patientId,
+      appointmentId: token.appointmentId,
       type: token.type,
       visitType: token.visitType,
       status: token.status,
       chiefComplaint: token.chiefComplaint,
+      notes: token.notes,
       estimatedWait: token.estimatedWait,
       checkInTime: token.checkInTime.toISOString(),
+      startTime: null,
       queueOrder: token.queueOrder,
       seatStatus: token.seatStatus,
     };
@@ -354,6 +367,13 @@ router.post('/:branchId/token', async (req, res) => {
       patientPhone,
       notificationMsg,
       channel
+    );
+
+    // Audit log
+    await createAuditLog(
+      branch.clinicId,
+      'TOKEN_CREATED',
+      `Token ${tokenNo} created for ${patientName} (Doctor: ${doctorProfile.user.name})`,
     );
 
     res.status(201).json({ token, patientsAhead });
@@ -395,12 +415,16 @@ router.get('/:branchId/live', async (req, res) => {
         tokenNo: t.tokenNo,
         patientName: t.patientName,
         patientPhone: t.patientPhone,
+        patientId: t.patientId,
+        appointmentId: t.appointmentId,
         type: t.type,
         visitType: t.visitType,
         status: t.status,
         chiefComplaint: t.chiefComplaint,
+        notes: t.notes,
         estimatedWait: t.estimatedWait,
         checkInTime: t.checkInTime.toISOString(),
+        startTime: t.startTime ? t.startTime.toISOString() : null,
         queueOrder: t.queueOrder,
         seatStatus: t.seatStatus,
       }));
@@ -445,7 +469,7 @@ router.get('/:branchId/live', async (req, res) => {
  */
 router.post('/:branchId/next', async (req, res) => {
   const { branchId } = req.params;
-  const { doctorId, notes } = req.body;
+  const { doctorId, notes, followUpDate } = req.body;
 
   if (!doctorId) {
     return res.status(400).json({ error: 'Doctor ID is required.' });
@@ -464,19 +488,35 @@ router.post('/:branchId/next', async (req, res) => {
         where: { id: activeConsult.id },
         data: { status: 'SERVED', endTime: new Date() },
       });
-      
+
       // Add a patient history log
       if (activeConsult.patientId) {
+        const doctorProfile = await prisma.doctorProfile.findUnique({
+          where: { id: doctorId },
+          include: { user: true },
+        });
+
         await prisma.visitLog.create({
           data: {
             tokenNo: activeConsult.tokenNo,
-            doctorName: 'Doctor', // fallback, can join profile
-            specialty: 'GP',
+            doctorName: doctorProfile?.user.name || 'Doctor',
+            specialty: doctorProfile?.speciality || 'GP',
             chiefComplaint: activeConsult.chiefComplaint || '',
             notes: notes || 'Completed consultation',
-            patientId: activeConsult.patientId, // link if exists
+            patientId: activeConsult.patientId,
+            followUpDate: followUpDate || null,
           },
         });
+
+        // Get clinicId for audit log
+        const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { clinicId: true } });
+        if (branch) {
+          await createAuditLog(
+            branch.clinicId,
+            'TOKEN_SERVED',
+            `Token ${activeConsult.tokenNo} served — Patient: ${activeConsult.patientName} (Dr. ${doctorProfile?.user.name || 'Doctor'})`,
+          );
+        }
       }
     }
 
@@ -508,7 +548,7 @@ router.post('/:branchId/next', async (req, res) => {
     // 5. Broadcast TV chime
     if (io) {
       broadcastTokenCalled(io, branchId, updatedNext.tokenNo, nextToken.doctor.user.name);
-      broadcastTokenUpdate(io, updatedNext.id, { status: 'IN_CONSULTATION', patientsAhead: 0, estimatedWait: 0 });
+      broadcastTokenUpdate(io, updatedNext.id, { status: 'IN_CONSULTATION', patientsAhead: 0, estimatedWait: 0, startTime: new Date().toISOString() });
     }
 
     // 6. Send SMS/WhatsApp
@@ -551,10 +591,15 @@ router.post('/:branchId/skip', async (req, res) => {
   const { tokenId, doctorId } = req.body;
 
   try {
-    await prisma.token.update({
+    const skippedToken = await prisma.token.update({
       where: { id: tokenId },
       data: { status: 'SKIPPED' },
     });
+
+    const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { clinicId: true } });
+    if (branch) {
+      await createAuditLog(branch.clinicId, 'TOKEN_SKIPPED', `Token ${skippedToken.tokenNo} skipped — ${skippedToken.patientName}`);
+    }
 
     const io = req.app.get('io');
     await promoteWaitingOutsidePatients(branchId, io);
@@ -593,10 +638,15 @@ router.post('/:branchId/noshow', async (req, res) => {
   const { tokenId, doctorId } = req.body;
 
   try {
-    await prisma.token.update({
+    const noShowToken = await prisma.token.update({
       where: { id: tokenId },
       data: { status: 'NO_SHOW' },
     });
+
+    const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { clinicId: true } });
+    if (branch) {
+      await createAuditLog(branch.clinicId, 'TOKEN_NO_SHOW', `Token ${noShowToken.tokenNo} — No-Show: ${noShowToken.patientName}`);
+    }
 
     const io = req.app.get('io');
     await promoteWaitingOutsidePatients(branchId, io);
@@ -720,6 +770,29 @@ router.post('/token/:tokenId/on-my-way', async (req, res) => {
     res.json({ message: 'Status updated. Clinic receptionist notified that you are on your way.', token });
   } catch (err) {
     res.status(500).json({ error: 'Server error activating virtual check-in.' });
+  }
+});
+
+/**
+ * @route   PUT /api/queues/:branchId/break
+ * @desc    Doctor toggles break mode — broadcasts to TV displays and reception
+ */
+router.put('/:branchId/break', async (req, res) => {
+  const { branchId } = req.params;
+  const { doctorId, doctorName, onBreak, resumeAt } = req.body;
+
+  if (!doctorId || !doctorName) {
+    return res.status(400).json({ error: 'doctorId and doctorName are required.' });
+  }
+
+  try {
+    const io = req.app.get('io');
+    if (io) {
+      broadcastDoctorBreak(io, branchId, doctorId, doctorName, !!onBreak, resumeAt || null);
+    }
+    res.json({ success: true, onBreak: !!onBreak });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error broadcasting break status.' });
   }
 });
 

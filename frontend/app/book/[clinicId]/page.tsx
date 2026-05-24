@@ -28,8 +28,23 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
   const [chiefComplaint, setChiefComplaint] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Booking mode
+  const [bookingMode, setBookingMode] = useState<'queue' | 'appointment'>('queue');
+
+  // Appointment scheduling
+  const [selectedDate, setSelectedDate] = useState('');
+  const [availableSlots, setAvailableSlots] = useState<{ time: string; available: boolean }[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState('');
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
+  const [visitType, setVisitType] = useState<'NEW' | 'FOLLOW_UP'>('NEW');
+  const [bookingSuccess, setBookingSuccess] = useState<any>(null);
+
   // Success State
   const [generatedToken, setGeneratedToken] = useState<any>(null);
+
+  // Holiday & unavailability checks
+  const [holidays, setHolidays] = useState<string[]>([]);
+  const [doctorUnavailableDates, setDoctorUnavailableDates] = useState<string[]>([]);
 
   useEffect(() => {
     async function fetchClinicDetails() {
@@ -44,6 +59,10 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
           }
         }
         setLoading(false);
+        try {
+          const hRes = await apiRequest(`/features/clinics/${clinicId}/holidays`);
+          setHolidays((hRes.holidays || []).map((h: any) => h.date));
+        } catch { /* ignore */ }
       } catch (err: any) {
         console.error(err);
         setError('Clinic not found or offline.');
@@ -52,6 +71,29 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
     }
     fetchClinicDetails();
   }, [clinicId]);
+
+  useEffect(() => {
+    if (!selectedDate || !selectedDoctorId || !branch) return;
+    async function loadSlots() {
+      setIsLoadingSlots(true);
+      setAvailableSlots([]);
+      setSelectedSlot('');
+      try {
+        const res = await apiRequest(`/appointments/slots?doctorId=${selectedDoctorId}&branchId=${branch.id}&date=${selectedDate}`);
+        setAvailableSlots(res.slots || []);
+      } catch { /* ignore */ } finally {
+        setIsLoadingSlots(false);
+      }
+      try {
+        const unavRes = await apiRequest(`/features/clinics/${clinicId}/unavailability?date=${selectedDate}`);
+        const unavailDates = (unavRes.unavailability || [])
+          .filter((u: any) => u.doctorId === selectedDoctorId)
+          .map((u: any) => u.date);
+        setDoctorUnavailableDates(unavailDates);
+      } catch { /* ignore */ }
+    }
+    loadSlots();
+  }, [selectedDate, selectedDoctorId, branch]);
 
   const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,6 +139,40 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
     }
   };
 
+  const handleAppointmentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDoctorId || !patientName || !patientPhone || !selectedDate || !selectedSlot) {
+      setError('Please fill in all fields and select a time slot.');
+      return;
+    }
+    setIsSubmitting(true);
+    setError('');
+    try {
+      // Create/login patient profile first
+      const pResponse = await apiRequest('/auth/patient-login', {
+        method: 'POST',
+        body: JSON.stringify({ phone: patientPhone, name: patientName, age: patientAge, gender: patientGender }),
+      });
+      // Book the appointment
+      const apptRes = await apiRequest('/appointments', {
+        method: 'POST',
+        body: JSON.stringify({
+          date: selectedDate,
+          timeSlot: selectedSlot,
+          type: visitType,
+          patientId: pResponse.user.id,
+          doctorId: selectedDoctorId,
+          branchId: branch.id,
+        }),
+      });
+      setBookingSuccess(apptRes.appointment);
+    } catch (err: any) {
+      setError(err.message || 'Failed to book appointment.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#fbfbfa] flex items-center justify-center">
@@ -128,6 +204,8 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
     }
   });
 
+  const minDate = new Date().toISOString().split('T')[0];
+
   return (
     <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] font-sans selection:bg-[#01696f]/20">
       
@@ -144,7 +222,25 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
 
       <main className="max-w-3xl mx-auto px-4 py-8 md:py-12">
         
-        {generatedToken ? (
+        {bookingSuccess ? (
+          <div className="bg-white border-2 border-[#01696f] rounded-xl p-8 md:p-12 text-center shadow-lg">
+            <div className="h-20 w-20 bg-[#e6f3f4] rounded-full flex items-center justify-center mx-auto mb-6">
+              <CheckCircle2 className="h-10 w-10 text-[#01696f]" />
+            </div>
+            <h2 className="font-serif text-3xl font-bold text-[#1a202c]">Appointment Booked!</h2>
+            <p className="text-[#64748b] mt-3">Your appointment has been confirmed.</p>
+            <div className="bg-[#fbfbfa] border border-[#e9e9e7] rounded-lg p-6 mt-8 max-w-sm mx-auto">
+              <div className="text-sm font-semibold text-[#1a202c] space-y-1">
+                <p>Date: <span className="text-[#01696f]">{bookingSuccess.date}</span></p>
+                <p>Time: <span className="text-[#01696f] font-mono">{bookingSuccess.timeSlot}</span></p>
+                <p>Doctor: Dr. {uniqueDoctors.find((d: any) => d.id === bookingSuccess.doctorId)?.user.name}</p>
+              </div>
+            </div>
+            <p className="text-sm text-[#64748b] mt-6 max-w-md mx-auto leading-relaxed">
+              Please arrive 10 minutes early. The receptionist will check you in and add you to the live queue on the day of your appointment.
+            </p>
+          </div>
+        ) : generatedToken ? (
           /* SUCCESS SCREEN */
           <div className="bg-white border-2 border-emerald-500 rounded-xl p-8 md:p-12 text-center shadow-lg animate-in zoom-in-95 duration-500">
             <div className="h-20 w-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -193,8 +289,26 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
               </div>
             </div>
 
+            {/* Mode Switcher */}
+            <div className="flex gap-1 p-1 bg-[#f4f4f3] rounded-lg border border-[#e9e9e7]">
+              <button
+                type="button"
+                onClick={() => { setBookingMode('queue'); setError(''); }}
+                className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${bookingMode === 'queue' ? 'bg-white text-[#01696f] shadow-sm border border-[#e9e9e7]' : 'text-[#64748b] hover:text-[#1a202c]'}`}
+              >
+                Join Queue Now
+              </button>
+              <button
+                type="button"
+                onClick={() => { setBookingMode('appointment'); setError(''); }}
+                className={`flex-1 py-2 text-xs font-bold rounded-md transition-all ${bookingMode === 'appointment' ? 'bg-white text-[#01696f] shadow-sm border border-[#e9e9e7]' : 'text-[#64748b] hover:text-[#1a202c]'}`}
+              >
+                Book for Later
+              </button>
+            </div>
+
             {/* Form */}
-            <form onSubmit={handleBookingSubmit} className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden">
+            <form onSubmit={bookingMode === 'queue' ? handleBookingSubmit : handleAppointmentSubmit} className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden">
               <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa]">
                 <h3 className="font-bold text-[#1a202c]">Patient Details</h3>
               </div>
@@ -272,6 +386,76 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
                   </div>
                 </div>
 
+                {bookingMode === 'appointment' && (
+                  <div className="pt-4 border-t border-[#e9e9e7] space-y-4">
+                    <div className="grid md:grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-xs font-bold text-[#64748b] uppercase tracking-wider mb-1">Preferred Date *</label>
+                        <input
+                          type="date"
+                          required={bookingMode === 'appointment'}
+                          min={minDate}
+                          className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-inner"
+                          value={selectedDate}
+                          onChange={(e) => setSelectedDate(e.target.value)}
+                        />
+                        {selectedDate && holidays.includes(selectedDate) && (
+                          <p className="text-xs text-red-500 mt-1 font-medium">
+                            ⚠ The clinic is closed on this date. Please choose another day.
+                          </p>
+                        )}
+                        {selectedDate && doctorUnavailableDates.includes(selectedDate) && (
+                          <p className="text-xs text-amber-600 mt-1 font-medium">
+                            ⚠ This doctor is not available on the selected date. Please choose another date or doctor.
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-[#64748b] uppercase tracking-wider mb-1">Visit Type</label>
+                        <select
+                          className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-xs cursor-pointer"
+                          value={visitType}
+                          onChange={(e) => setVisitType(e.target.value as any)}
+                        >
+                          <option value="NEW">New Visit</option>
+                          <option value="FOLLOW_UP">Follow-up</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {selectedDate && (
+                      <div>
+                        <label className="block text-xs font-bold text-[#64748b] uppercase tracking-wider mb-2">Available Time Slots *</label>
+                        {isLoadingSlots ? (
+                          <p className="text-xs text-[#64748b]">Loading slots...</p>
+                        ) : availableSlots.length === 0 ? (
+                          <p className="text-xs text-red-500">No slots available for this date. Try another day.</p>
+                        ) : (
+                          <div className="grid grid-cols-4 gap-2">
+                            {availableSlots.map((slot) => (
+                              <button
+                                key={slot.time}
+                                type="button"
+                                disabled={!slot.available}
+                                onClick={() => setSelectedSlot(slot.time)}
+                                className={`py-2 text-xs font-semibold rounded-md border transition-all ${
+                                  !slot.available
+                                    ? 'border-[#e9e9e7] bg-[#f4f4f3] text-[#a0aec0] cursor-not-allowed line-through'
+                                    : selectedSlot === slot.time
+                                      ? 'border-[#01696f] bg-[#e6f3f4] text-[#01696f] shadow-sm'
+                                      : 'border-[#e9e9e7] bg-white hover:border-[#01696f]/40 text-[#1a202c] cursor-pointer'
+                                }`}
+                              >
+                                {slot.time}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="pt-4 border-t border-[#e9e9e7]">
                   <div className="flex justify-between items-end mb-1">
                     <label className="block text-xs font-bold text-[#64748b] uppercase tracking-wider">Chief Complaint (Optional)</label>
@@ -286,11 +470,11 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
 
               </div>
               <div className="px-6 py-4 border-t border-[#e9e9e7] bg-[#fbfbfa]">
-                <button 
-                  type="submit" disabled={isSubmitting}
+                <button
+                  type="submit" disabled={isSubmitting || (bookingMode === 'appointment' && holidays.includes(selectedDate))}
                   className="w-full py-3 bg-[#01696f] text-white text-sm font-bold rounded-md hover:bg-[#005459] transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  {isSubmitting ? 'Processing...' : 'Confirm Booking & Get Token'}
+                  {isSubmitting ? 'Processing...' : bookingMode === 'queue' ? 'Confirm Booking & Get Token' : 'Book Appointment Slot'}
                 </button>
                 <p className="text-[10px] text-center text-[#64748b] mt-3 font-medium">
                   By booking, you agree to receive WhatsApp/SMS updates regarding your token status.

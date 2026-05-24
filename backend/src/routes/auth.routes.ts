@@ -191,18 +191,32 @@ router.post('/onboard', authenticateToken, async (req: AuthRequest, res) => {
 
       // 4. Create each doctor
       for (const doc of doctors) {
-        let doctorUser = await tx.user.findFirst({
-          where: { OR: [{ email: doc.email }, { phone: doc.phone || undefined }] },
-        });
+        const email = doc.email?.trim() || null;
+        const phone = doc.phone?.trim() || null;
+
+        if (!email && !phone) {
+          throw new Error(`Doctor "${doc.name || 'unnamed'}" must have an email or contact number.`);
+        }
+
+        let doctorUser = null;
+        const orConditions = [];
+        if (email) orConditions.push({ email });
+        if (phone) orConditions.push({ phone });
+
+        if (orConditions.length > 0) {
+          doctorUser = await tx.user.findFirst({
+            where: { OR: orConditions },
+          });
+        }
 
         if (!doctorUser) {
           const hashedPassword = await bcrypt.hash(doc.password || 'CureQDoctor123!', 10);
           doctorUser = await tx.user.create({
             data: {
-              email: doc.email,
-              phone: doc.phone || null,
+              email,
+              phone,
               password: hashedPassword,
-              name: doc.name,
+              name: doc.name || 'Unnamed Doctor',
               role: 'DOCTOR',
             },
           });
@@ -262,6 +276,9 @@ router.post('/onboard', authenticateToken, async (req: AuthRequest, res) => {
       }
 
       return { clinic, branch };
+    }, {
+      maxWait: 5000,
+      timeout: 20000,
     });
 
     res.status(201).json({
@@ -271,7 +288,7 @@ router.post('/onboard', authenticateToken, async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     console.error('Onboarding failure:', err);
-    res.status(500).json({ error: 'Server error during clinic onboarding.' });
+    res.status(500).json({ error: err.message || 'Server error during clinic onboarding.' });
   }
 });
 
@@ -309,6 +326,52 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res) => {
   } catch (err: any) {
     console.error('Fetch me error:', err);
     res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+/**
+ * @route   POST /api/auth/check-email
+ * @desc    Check if an email exists (for password reset flow)
+ */
+router.post('/check-email', async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required.' });
+  }
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: 'No account found with this email address.' });
+    }
+    res.json({ message: 'Email found.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+/**
+ * @route   POST /api/auth/reset-password
+ * @desc    Reset password for an existing account
+ */
+router.post('/reset-password', async (req, res) => {
+  const { email, newPassword } = req.body;
+  if (!email || !newPassword) {
+    return res.status(400).json({ error: 'Email and new password are required.' });
+  }
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: 'No account found with this email.' });
+    }
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({ where: { email }, data: { password: hashedPassword } });
+    res.json({ message: 'Password reset successfully.' });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ error: 'Server error resetting password.' });
   }
 });
 

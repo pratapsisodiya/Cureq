@@ -1,11 +1,9 @@
 'use client';
 
-import { SignInButton, UserButton, useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
 import { ShieldCheck, Activity, Users, Tv, Smartphone, Cpu, ArrowRight } from 'lucide-react';
 
 export default function LandingPage() {
-  const { isSignedIn } = useAuth();
 
   return (
     <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] selection:bg-[#01696f]/20 selection:text-[#01696f]">
@@ -16,19 +14,19 @@ export default function LandingPage() {
             <Activity className="h-6 w-6 text-[#01696f]" />
             <span className="font-serif text-2xl font-bold tracking-tight text-[#01696f]">CureQ</span>
           </div>
-          <nav className="flex items-center gap-6">
-            <Link href="/dashboard/doctor" className="text-sm font-medium text-white bg-[#01696f] px-3.5 py-1.5 rounded-[4px] hover:bg-[#005459] transition-all">
+          <nav className="flex items-center gap-4">
+            <Link href="/dashboard/reception" className="text-sm font-medium text-[#64748b] hover:text-[#1a202c] transition-colors">
+              Reception
+            </Link>
+            <Link href="/dashboard/doctor" className="text-sm font-medium text-[#64748b] hover:text-[#1a202c] transition-colors">
               Doctor Console
             </Link>
-            {!isSignedIn ? (
-              <SignInButton mode="modal">
-                <button className="text-sm font-medium text-[#64748b] hover:text-[#01696f] cursor-pointer bg-transparent border-0 p-0 transition-colors">
-                  Sign In
-                </button>
-              </SignInButton>
-            ) : (
-              <UserButton />
-            )}
+            <Link href="/patient/portal" className="text-sm font-medium text-[#64748b] hover:text-[#1a202c] transition-colors">
+              Patient Portal
+            </Link>
+            <Link href="/login" className="text-sm font-medium text-white bg-[#01696f] px-3.5 py-1.5 rounded-[4px] hover:bg-[#005459] transition-all">
+              Login
+            </Link>
           </nav>
         </div>
       </header>

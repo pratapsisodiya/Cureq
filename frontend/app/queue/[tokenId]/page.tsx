@@ -27,6 +27,12 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
   const [onWayComplaint, setOnWayComplaint] = useState('');
   const [showOnWayModal, setShowOnWayModal] = useState(false);
 
+  // Rating states
+  const [rating, setRating] = useState(0);
+  const [ratingComment, setRatingComment] = useState('');
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const [isSubmittingRating, setIsSubmittingRating] = useState(false);
+
   // History states
   const [historyLogs, setHistoryLogs] = useState<any[]>([]);
   const [broadcastMessage, setBroadcastMessage] = useState('');
@@ -65,12 +71,15 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
       socket.emit('join:token', tokenId);
     });
 
-    socket.on('token:updated', (data: { status: string; estimatedWait: number; patientsAhead: number }) => {
-      setTokenData((prev: any) => prev ? { ...prev, status: data.status, estimatedWait: data.estimatedWait } : null);
-      setPatientsAhead(data.patientsAhead);
-      if (data.status === 'IN_CONSULTATION') {
-        setCurrentlyServing(tokenData?.tokenNo || 'Serving');
-      }
+    socket.on('token:updated', (data: { status: string; estimatedWait: number; patientsAhead: number; tokenNo?: string }) => {
+      setTokenData((prev: any) => {
+        if (!prev) return null;
+        if (data.status === 'IN_CONSULTATION') {
+          setCurrentlyServing(prev.tokenNo || 'Serving');
+        }
+        return { ...prev, status: data.status, estimatedWait: data.estimatedWait };
+      });
+      setPatientsAhead(data.patientsAhead ?? 0);
     });
 
     socket.on('broadcast:alert', (data: { message: string }) => {
@@ -94,7 +103,22 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
     };
   }, [tokenId, tokenData?.branchId]);
 
-  // 3. Trigger "On My Way" virtual check-in
+  // 3. Submit rating after consultation
+  const handleSubmitRating = async () => {
+    if (rating === 0) return;
+    setIsSubmittingRating(true);
+    try {
+      await apiRequest(`/features/tokens/${tokenId}/rate`, {
+        method: 'POST',
+        body: JSON.stringify({ rating, ratingComment }),
+      });
+      setRatingSubmitted(true);
+    } catch { /* ignore */ } finally {
+      setIsSubmittingRating(false);
+    }
+  };
+
+  // 4. Trigger "On My Way" virtual check-in
   const handleVirtualCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -154,8 +178,11 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
             {tokenData.branch.name}
           </span>
           <p className="text-xs mt-3 font-semibold text-gray-300">
-            Consulting: {tokenData.doctor.user.name} ({tokenData.doctor.speciality})
+            Consulting: {tokenData.doctor.user.name} · {tokenData.doctor.speciality}
           </p>
+          {tokenData.branch?.address && (
+            <p className="text-[10px] text-gray-500 mt-1 font-light">{tokenData.branch.address}</p>
+          )}
         </div>
 
         {/* Live Token Status Box */}
@@ -200,6 +227,38 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
           </div>
         </div>
 
+        {/* Visual Queue Progress Bar */}
+        {tokenData.status === 'WAITING' && patientsAhead <= 10 && (
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-[9px] text-gray-400 font-medium">
+              <span>Queue Position</span>
+              <span>#{patientsAhead + 1} in line</span>
+            </div>
+            <div className="h-2 bg-[#1c2e31] rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{
+                  width: patientsAhead === 0 ? '100%' : `${Math.max(5, 100 - (patientsAhead / 10) * 100)}%`,
+                  backgroundColor: patientsAhead === 0 ? '#01696f' : patientsAhead <= 2 ? '#f59e0b' : '#64748b',
+                }}
+              />
+            </div>
+            {patientsAhead <= 2 && patientsAhead > 0 && (
+              <p className="text-[10px] text-amber-400 font-semibold text-center animate-pulse">
+                Almost your turn! Please be ready near the chamber.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Called to chamber alert */}
+        {tokenData.status === 'IN_CONSULTATION' && (
+          <div className="bg-[#01696f]/20 border-2 border-[#01696f] p-4 rounded-[6px] text-center animate-pulse">
+            <p className="text-[#01696f] font-bold text-base">It's Your Turn!</p>
+            <p className="text-xs text-gray-300 mt-1 font-light">Please proceed to Dr. {tokenData.doctor.user.name}'s chamber now.</p>
+          </div>
+        )}
+
         {/* "On my way" virtual check-in button */}
         {tokenData.status === 'WAITING' && (
           <div>
@@ -217,6 +276,53 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
                 <MapPin className="h-4 w-4" /> I'm On My Way (Virtual Queue)
               </button>
             )}
+          </div>
+        )}
+        {/* Served state with rating */}
+        {tokenData.status === 'SERVED' && (
+          <div className="bg-emerald-950/20 border border-emerald-900/50 p-5 rounded-[6px] space-y-4">
+            <div className="text-center">
+              <p className="text-emerald-400 font-semibold text-sm">Consultation Complete</p>
+              <p className="text-xs text-gray-400 mt-1 font-light">Thank you for visiting. See you again!</p>
+            </div>
+            {!ratingSubmitted ? (
+              <div className="border-t border-[#1c2e31] pt-4 space-y-3">
+                <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider text-center">Rate your experience</p>
+                <div className="flex justify-center gap-3">
+                  {[1,2,3,4,5].map(star => (
+                    <button key={star} type="button" onClick={() => setRating(star)}
+                      className={`text-2xl transition-transform hover:scale-110 cursor-pointer ${rating >= star ? 'text-amber-400' : 'text-gray-600'}`}>
+                      ★
+                    </button>
+                  ))}
+                </div>
+                {rating > 0 && (
+                  <textarea
+                    placeholder="Optional comment..."
+                    rows={2}
+                    className="w-full px-3 py-2 border border-[#1c2e31] rounded-[4px] bg-[#0d1516] text-xs focus:outline-none focus:border-[#01696f] text-gray-100 resize-none"
+                    value={ratingComment}
+                    onChange={e => setRatingComment(e.target.value)}
+                  />
+                )}
+                {rating > 0 && (
+                  <button onClick={handleSubmitRating} disabled={isSubmittingRating}
+                    className="w-full py-2 bg-[#01696f] hover:bg-[#005459] text-white text-xs font-semibold rounded-[4px] cursor-pointer disabled:opacity-50">
+                    {isSubmittingRating ? 'Submitting...' : 'Submit Feedback'}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="text-center text-xs text-emerald-400 font-semibold border-t border-[#1c2e31] pt-3">
+                ✓ Thank you for your feedback!
+              </p>
+            )}
+          </div>
+        )}
+        {tokenData.status === 'SKIPPED' && (
+          <div className="bg-amber-950/20 border border-amber-900/50 p-4 rounded-[6px] text-center">
+            <p className="text-amber-400 font-semibold text-sm">Token Skipped</p>
+            <p className="text-xs text-gray-400 mt-1 font-light">Please check with reception to get a new token.</p>
           </div>
         )}
       </div>

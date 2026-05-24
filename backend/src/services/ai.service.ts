@@ -24,8 +24,8 @@ export class AIService {
           doctorId,
           branchId,
           status: 'SERVED',
-          startTime: { not: null as any },
-          endTime: { not: null as any },
+          startTime: { not: null },
+          endTime: { not: null },
           createdAt: { gte: thirtyDaysAgo },
         },
         select: {
@@ -105,7 +105,7 @@ export class AIService {
       });
 
       const avgTokens = await prisma.token.findMany({
-        where: { branch: { clinicId }, status: 'SERVED', startTime: { not: null as any }, checkInTime: { not: null as any } },
+        where: { branch: { clinicId }, status: 'SERVED', startTime: { not: null } },
         select: { checkInTime: true, startTime: true }
       });
 

@@ -87,6 +87,8 @@ model Clinic {
   adminId     String           @unique
   admin       User             @relation("ClinicAdmin", fields: [adminId], references: [id], onDelete: Cascade)
   branches    Branch[]
+  holidays    ClinicHoliday[]   @relation("ClinicHolidays")
+  auditLogs   AuditLog[]        @relation("ClinicAuditLogs")
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 }
@@ -103,6 +105,7 @@ model Branch {
   tokens      Token[]
   appointments Appointment[]
   notifications NotificationLog[]
+  waitlistEntries WaitlistEntry[] @relation("BranchWaitlist")
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 }
@@ -120,6 +123,8 @@ model DoctorProfile {
   schedules    DoctorSchedule[]
   tokens       Token[]          @relation("DoctorTokens")
   appointments Appointment[]    @relation("DoctorAppointments")
+  unavailability DoctorUnavailability[] @relation("DoctorUnavailability")
+  waitlistEntries WaitlistEntry[]       @relation("DoctorWaitlist")
 }
 
 model DoctorSchedule {
@@ -172,6 +177,7 @@ model Token {
   appointment    Appointment? @relation("TokenAppointment", fields: [appointmentId], references: [id], onDelete: SetNull)
   
   seatStatus     SeatStatus  @default(SEATED)
+  consultationFee Float?   // Fee charged for this consultation
 
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
@@ -208,7 +214,9 @@ model VisitLog {
   chiefComplaint String?
   notes          String?   // Prescription / Consultation notes
   followUpDate   String?   // YYYY-MM-DD or custom text
-  
+  rating         Int?      // 1-5 stars patient feedback
+  ratingComment  String?
+
   patientId      String
   patient        User      @relation("PatientHistory", fields: [patientId], references: [id], onDelete: Cascade)
   
@@ -224,4 +232,54 @@ model NotificationLog {
   channel   NotificationChannel
   status    String              // "SENT", "FAILED"
   createdAt DateTime            @default(now())
+}
+
+model ClinicHoliday {
+  id        String   @id @default(uuid())
+  clinicId  String
+  clinic    Clinic   @relation("ClinicHolidays", fields: [clinicId], references: [id], onDelete: Cascade)
+  date      String   // YYYY-MM-DD
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([clinicId, date])
+}
+
+model DoctorUnavailability {
+  id        String        @id @default(uuid())
+  doctorId  String
+  doctor    DoctorProfile @relation("DoctorUnavailability", fields: [doctorId], references: [id], onDelete: Cascade)
+  branchId  String
+  date      String        // YYYY-MM-DD
+  reason    String?
+  createdAt DateTime      @default(now())
+
+  @@unique([doctorId, date])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  clinicId  String
+  clinic    Clinic   @relation("ClinicAuditLogs", fields: [clinicId], references: [id], onDelete: Cascade)
+  userId    String?
+  userName  String?
+  userRole  String?
+  action    String
+  details   String?
+  createdAt DateTime @default(now())
+}
+
+model WaitlistEntry {
+  id             String        @id @default(uuid())
+  patientName    String
+  patientPhone   String
+  patientId      String?
+  doctorId       String
+  doctor         DoctorProfile @relation("DoctorWaitlist", fields: [doctorId], references: [id], onDelete: Cascade)
+  branchId       String
+  branch         Branch        @relation("BranchWaitlist", fields: [branchId], references: [id], onDelete: Cascade)
+  targetDate     String        // YYYY-MM-DD
+  chiefComplaint String?
+  status         String        @default("PENDING")
+  createdAt      DateTime      @default(now())
 }

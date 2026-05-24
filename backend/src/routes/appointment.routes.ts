@@ -172,4 +172,30 @@ router.get('/:clinicId', async (req, res) => {
   }
 });
 
+/**
+ * @route   PATCH /api/appointments/:id/cancel
+ * @desc    Cancel a booked appointment
+ */
+router.patch('/:id/cancel', async (req, res) => {
+  try {
+    const appointment = await prisma.appointment.findUnique({ where: { id: req.params.id } });
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found.' });
+    }
+    if (appointment.status === 'CANCELLED') {
+      return res.status(400).json({ error: 'Appointment is already cancelled.' });
+    }
+
+    const updated = await prisma.appointment.update({
+      where: { id: req.params.id },
+      data: { status: 'CANCELLED' },
+    });
+
+    res.json({ message: 'Appointment cancelled.', appointment: updated });
+  } catch (err) {
+    console.error('Cancel appointment error:', err);
+    res.status(500).json({ error: 'Server error cancelling appointment.' });
+  }
+});
+
 export default router;

@@ -59,6 +59,12 @@ body {
   animation: flash-active 1.5s infinite ease-in-out;
 }
 
+/* TV display ticker scroll */
+@keyframes ticker-slide {
+  0%   { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
 /* A5 Token Slip Print Styles */
 @media print {
   body * {
@@ -68,14 +74,17 @@ body {
     visibility: visible;
   }
   .print-area {
-    position: absolute;
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    position: fixed;
     left: 0;
     top: 0;
     width: 148mm;
-    height: 210mm; /* A5 size */
-    padding: 20mm;
+    min-height: 210mm;
+    padding: 12mm;
     border: none;
-    background: white;
-    color: black;
+    background: white !important;
+    color: black !important;
   }
 }
