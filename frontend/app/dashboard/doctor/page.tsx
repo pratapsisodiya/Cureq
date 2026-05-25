@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { useQueueStore, TokenItem } from '../../../src/store/useQueueStore';
 import { apiRequest } from '../../../src/utils/api';
+import { useClerkSync } from '../../../src/utils/useClerkSync';
+import { useUser } from '@clerk/nextjs';
 import VoiceDictation from '../../../src/components/VoiceDictation';
 import { useToast } from '../../../src/components/Toast';
 import {
@@ -18,6 +20,9 @@ const SPECIALITIES_LIST = [
 ];
 
 export default function DoctorConsole() {
+  const { syncing } = useClerkSync();
+  const { user } = useUser();
+
   const {
     activeQueue, servedToday, fetchQueue, initSocket, disconnectSocket,
     callNext, skipToken, markNoShow
@@ -40,7 +45,6 @@ export default function DoctorConsole() {
   const [onboardError, setOnboardError] = useState('');
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
   const [adminPhone, setAdminPhone] = useState('');
   const [clinicName, setClinicName] = useState('');
   const [selectedSpecialities, setSelectedSpecialities] = useState<string[]>([]);
@@ -117,12 +121,23 @@ export default function DoctorConsole() {
     noshowRate: 0
   });
 
+  // Prefill admin info from Clerk
+  useEffect(() => {
+    if (user) {
+      setAdminName(user.fullName || '');
+      setAdminEmail(user.primaryEmailAddress?.emailAddress || '');
+      setAdminPhone(user.primaryPhoneNumber?.phoneNumber || '');
+    }
+  }, [user]);
+
   useEffect(() => {
     setTodayStr(new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }));
   }, []);
 
   // 1. Check configuration
   useEffect(() => {
+    if (syncing) return;
+
     async function loadDoctorContext() {
       let savedClinicId = localStorage.getItem('cureq_clinic_id') || '';
       let savedBranchId = localStorage.getItem('cureq_branch_id') || '';
@@ -136,7 +151,7 @@ export default function DoctorConsole() {
       }
     }
     loadDoctorContext();
-  }, []);
+  }, [syncing]);
 
   const fetchDoctors = async (cId: string) => {
     try {
@@ -167,13 +182,6 @@ export default function DoctorConsole() {
     setLoading(true);
     setOnboardError('');
     try {
-      const regResponse = await apiRequest('/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({ name: adminName, email: adminEmail, password: adminPassword, phone: adminPhone }),
-      });
-      localStorage.setItem('cureq_token', regResponse.token);
-      localStorage.setItem('cureq_role', 'CLINIC_ADMIN');
-
       const onboardResponse = await apiRequest('/auth/onboard', {
         method: 'POST',
         body: JSON.stringify({ clinicName, speciality: selectedSpecialities.join(', '), doctors }),
@@ -621,28 +629,20 @@ export default function DoctorConsole() {
             {step === 1 && (
               <div className="space-y-4">
                 <div>
+                  <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Logged In Account</label>
+                  <div className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md bg-[#f4f4f3] text-xs text-[#64748b] font-light">
+                    {adminName} ({adminEmail})
+                  </div>
+                </div>
+                <div>
                   <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Clinic Name</label>
-                  <input type="text" required placeholder="Apex Clinic" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={clinicName} onChange={(e) => setClinicName(e.target.value)} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Name</label>
-                    <input type="text" required placeholder="John Doe" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminName} onChange={(e) => setAdminName(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Phone</label>
-                    <input type="text" required placeholder="9998887770" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminPhone} onChange={(e) => setAdminPhone(e.target.value)} />
-                  </div>
+                  <input type="text" required placeholder="Apex Clinic" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs text-sm" value={clinicName} onChange={(e) => setClinicName(e.target.value)} />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Email</label>
-                  <input type="email" required placeholder="admin@clinic.com" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
+                  <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Phone</label>
+                  <input type="text" required placeholder="e.g. 9998887770" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs text-sm" value={adminPhone} onChange={(e) => setAdminPhone(e.target.value)} />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Password</label>
-                  <input type="password" required placeholder="••••••••" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
-                </div>
-                <button onClick={() => { if (clinicName && adminName && adminEmail && adminPassword && adminPhone) setStep(2); else setOnboardError('Fill all details'); }} className="w-full mt-6 py-2 bg-[#01696f] text-white font-bold text-sm rounded-md shadow-md hover:bg-[#005459] transition-colors flex items-center justify-center gap-2">
+                <button onClick={() => { if (clinicName && adminPhone) setStep(2); else setOnboardError('Fill all details (Clinic Name and Contact Phone)'); }} className="w-full mt-6 py-2 bg-[#01696f] text-white font-bold text-sm rounded-md shadow-md hover:bg-[#005459] transition-colors flex items-center justify-center gap-2 cursor-pointer">
                   Continue <ArrowRight className="h-4 w-4" />
                 </button>
               </div>

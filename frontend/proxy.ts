@@ -1,4 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
 // Define which routes require authentication
 const isProtectedRoute = createRouteMatcher([
@@ -7,16 +8,23 @@ const isProtectedRoute = createRouteMatcher([
   '/onboarding(.*)'
 ]);
 
+const isAuthRoute = createRouteMatcher(['/login(.*)']);
+
 export default clerkMiddleware(async (auth, req) => {
+  const authObj = await auth();
+
+  // If the user is already authenticated and visits the login page, push them to the dashboard
+  if (authObj.userId && isAuthRoute(req)) {
+    return NextResponse.redirect(new URL('/dashboard/reception', req.url));
+  }
+
   if (isProtectedRoute(req)) {
     // If the user is not authenticated and the route is protected, this redirects them to sign-in.
-    const authObj = await auth();
     if (!authObj.userId) {
       return authObj.redirectToSignIn();
     }
   }
 });
-
 export const config = {
   matcher: [
     // Skip Next.js internals and all static files, unless found in search params

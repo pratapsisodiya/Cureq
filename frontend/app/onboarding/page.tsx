@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { apiRequest } from '../../src/utils/api';
+import { useClerkSync } from '../../src/utils/useClerkSync';
 import { Activity, ShieldCheck, ArrowRight, ArrowLeft, Plus, Trash } from 'lucide-react';
 
 const SPECIALITIES_LIST = [
@@ -20,6 +21,7 @@ const SPECIALITIES_LIST = [
 export default function OnboardingPage() {
   const router = useRouter();
   const { user } = useUser();
+  const { syncing } = useClerkSync();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -27,7 +29,6 @@ export default function OnboardingPage() {
   // Step 1: Admin Account & Clinic Profile
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
   const [adminPhone, setAdminPhone] = useState('');
   const [clinicName, setClinicName] = useState('');
 
@@ -36,8 +37,20 @@ export default function OnboardingPage() {
     if (user) {
       setAdminName(user.fullName || '');
       setAdminEmail(user.primaryEmailAddress?.emailAddress || '');
+      setAdminPhone(user.primaryPhoneNumber?.phoneNumber || '');
     }
   }, [user]);
+
+  if (syncing) {
+    return (
+      <div className="min-h-screen bg-[#fbfbfa] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <Activity className="h-8 w-8 text-[#01696f] animate-spin" />
+          <span className="text-sm font-medium text-[#64748b]">Syncing auth session...</span>
+        </div>
+      </div>
+    );
+  }
   
   // Step 2: Speciality tag select
   const [selectedSpecialities, setSelectedSpecialities] = useState<string[]>([]);
@@ -92,22 +105,7 @@ export default function OnboardingPage() {
     setError('');
 
     try {
-      // 1. Register the Admin
-      const regResponse = await apiRequest('/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: adminName,
-          email: adminEmail,
-          password: adminPassword,
-          phone: adminPhone,
-        }),
-      });
-
-      const token = regResponse.token;
-      localStorage.setItem('cureq_token', token);
-      localStorage.setItem('cureq_role', 'CLINIC_ADMIN');
-
-      // 2. Submit Clinic & Doctors configuration
+      // 1. Submit Clinic & Doctors configuration directly
       const onboardResponse = await apiRequest('/auth/onboard', {
         method: 'POST',
         body: JSON.stringify({
@@ -162,6 +160,12 @@ export default function OnboardingPage() {
           {step === 1 && (
             <div className="space-y-4">
               <div>
+                <label className="block text-xs font-medium text-[#475569]">Logged In Account</label>
+                <div className="mt-1 block w-full px-3 py-2 border border-[#e9e9e7] rounded-[4px] bg-[#fbfbfa] text-sm text-[#64748b] font-light">
+                  {adminName} ({adminEmail})
+                </div>
+              </div>
+              <div>
                 <label className="block text-xs font-medium text-[#475569]">Clinic Name</label>
                 <input
                   type="text"
@@ -172,57 +176,22 @@ export default function OnboardingPage() {
                   onChange={(e) => setClinicName(e.target.value)}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-[#475569]">Admin Name</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="John Doe"
-                    className="mt-1 block w-full px-3 py-2 border border-[#e9e9e7] rounded-[4px] bg-white text-sm focus:outline-none focus:border-[#01696f] focus:ring-1 focus:ring-[#01696f]/20 text-[#1a202c] placeholder:text-gray-400"
-                    value={adminName}
-                    onChange={(e) => setAdminName(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-[#475569]">Admin Phone</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="9998887770"
-                    className="mt-1 block w-full px-3 py-2 border border-[#e9e9e7] rounded-[4px] bg-white text-sm focus:outline-none focus:border-[#01696f] focus:ring-1 focus:ring-[#01696f]/20 text-[#1a202c] placeholder:text-gray-400"
-                    value={adminPhone}
-                    onChange={(e) => setAdminPhone(e.target.value)}
-                  />
-                </div>
-              </div>
               <div>
-                <label className="block text-xs font-medium text-[#475569]">Admin Email</label>
+                <label className="block text-xs font-medium text-[#475569]">Admin Phone</label>
                 <input
-                  type="email"
+                  type="text"
                   required
-                  placeholder="admin@clinic.com"
+                  placeholder="e.g. 9998887770"
                   className="mt-1 block w-full px-3 py-2 border border-[#e9e9e7] rounded-[4px] bg-white text-sm focus:outline-none focus:border-[#01696f] focus:ring-1 focus:ring-[#01696f]/20 text-[#1a202c] placeholder:text-gray-400"
-                  value={adminEmail}
-                  onChange={(e) => setAdminEmail(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-[#475569]">Admin Password</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  className="mt-1 block w-full px-3 py-2 border border-[#e9e9e7] rounded-[4px] bg-white text-sm focus:outline-none focus:border-[#01696f] focus:ring-1 focus:ring-[#01696f]/20 text-[#1a202c] placeholder:text-gray-400"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
+                  value={adminPhone}
+                  onChange={(e) => setAdminPhone(e.target.value)}
                 />
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  if (clinicName && adminName && adminEmail && adminPassword && adminPhone) setStep(2);
-                  else setError('Please fill all account details first.');
+                  if (clinicName && adminPhone) setStep(2);
+                  else setError('Please fill all clinic name and contact phone details.');
                 }}
                 className="w-full mt-6 py-2 bg-[#01696f] text-white text-sm font-semibold rounded-[4px] hover:bg-[#005459] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
               >

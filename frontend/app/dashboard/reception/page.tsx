@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { useQueueStore, TokenItem } from '../../../src/store/useQueueStore';
 import { apiRequest } from '../../../src/utils/api';
+import { useClerkSync } from '../../../src/utils/useClerkSync';
+import { useUser } from '@clerk/nextjs';
 import VoiceDictation from '../../../src/components/VoiceDictation';
 import { useToast } from '../../../src/components/Toast';
 import {
@@ -17,6 +19,9 @@ const SPECIALITIES_LIST = [
 ];
 
 export default function ReceptionDashboard() {
+  const { syncing } = useClerkSync();
+  const { user } = useUser();
+
   const {
     activeQueue, servedToday, skippedToday, noShowToday,
     fetchQueue, initSocket, disconnectSocket, reorderQueue, recallToken, updateSeatsCapacity,
@@ -97,7 +102,6 @@ export default function ReceptionDashboard() {
   const [onboardError, setOnboardError] = useState('');
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
   const [adminPhone, setAdminPhone] = useState('');
   const [clinicName, setClinicName] = useState('');
   const [selectedSpecialities, setSelectedSpecialities] = useState<string[]>([]);
@@ -105,8 +109,19 @@ export default function ReceptionDashboard() {
     { name: '', email: '', password: 'DoctorCureQ123!', phone: '', speciality: '', schedules: [{ dayOfWeek: '1', startTime: '09:00', endTime: '17:00', slotDuration: '15', maxPatients: '30', bufferTime: '5' }] }
   ]);
 
+  // Prefill admin info from Clerk
+  useEffect(() => {
+    if (user) {
+      setAdminName(user.fullName || '');
+      setAdminEmail(user.primaryEmailAddress?.emailAddress || '');
+      setAdminPhone(user.primaryPhoneNumber?.phoneNumber || '');
+    }
+  }, [user]);
+
   // 1. Initial configuration check
   useEffect(() => {
+    if (syncing) return;
+
     async function loadClinicStructure() {
       let savedClinicId = localStorage.getItem('cureq_clinic_id') || '';
       let savedBranchId = localStorage.getItem('cureq_branch_id') || '';
@@ -120,7 +135,7 @@ export default function ReceptionDashboard() {
       }
     }
     loadClinicStructure();
-  }, []);
+  }, [syncing]);
 
   // Parse query param tab on mount
   useEffect(() => {
@@ -203,13 +218,6 @@ export default function ReceptionDashboard() {
     setLoading(true);
     setOnboardError('');
     try {
-      const regResponse = await apiRequest('/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({ name: adminName, email: adminEmail, password: adminPassword, phone: adminPhone }),
-      });
-      localStorage.setItem('cureq_token', regResponse.token);
-      localStorage.setItem('cureq_role', 'CLINIC_ADMIN');
-
       const onboardResponse = await apiRequest('/auth/onboard', {
         method: 'POST',
         body: JSON.stringify({ clinicName, speciality: selectedSpecialities.join(', '), doctors }),
@@ -706,28 +714,20 @@ export default function ReceptionDashboard() {
               {step === 1 && (
                 <div className="space-y-4">
                   <div>
+                    <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Logged In Account</label>
+                    <div className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md bg-[#f4f4f3] text-xs text-[#64748b] font-light">
+                      {adminName} ({adminEmail})
+                    </div>
+                  </div>
+                  <div>
                     <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Clinic Name</label>
-                    <input type="text" required placeholder="Apex Clinic" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={clinicName} onChange={(e) => setClinicName(e.target.value)} />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Name</label>
-                      <input type="text" required placeholder="John Doe" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminName} onChange={(e) => setAdminName(e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Phone</label>
-                      <input type="text" required placeholder="9998887770" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminPhone} onChange={(e) => setAdminPhone(e.target.value)} />
-                    </div>
+                    <input type="text" required placeholder="Apex Clinic" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs text-sm" value={clinicName} onChange={(e) => setClinicName(e.target.value)} />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Email</label>
-                    <input type="email" required placeholder="admin@clinic.com" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
+                    <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Admin Phone</label>
+                    <input type="text" required placeholder="e.g. 9998887770" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs text-sm" value={adminPhone} onChange={(e) => setAdminPhone(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-[#64748b] uppercase tracking-wider mb-1">Password</label>
-                    <input type="password" required placeholder="••••••••" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md focus:border-[#01696f] outline-none shadow-xs" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
-                  </div>
-                  <button onClick={() => { if (clinicName && adminName && adminEmail && adminPassword && adminPhone) setStep(2); else setOnboardError('Fill all details'); }} className="w-full mt-6 py-2 bg-[#01696f] text-white font-bold text-sm rounded-md shadow-md hover:bg-[#005459] transition-colors flex items-center justify-center gap-2">
+                  <button onClick={() => { if (clinicName && adminPhone) setStep(2); else setOnboardError('Fill all details (Clinic Name and Contact Phone)'); }} className="w-full mt-6 py-2 bg-[#01696f] text-white font-bold text-sm rounded-md shadow-md hover:bg-[#005459] transition-colors flex items-center justify-center gap-2 cursor-pointer">
                     Continue <ArrowRight className="h-4 w-4" />
                   </button>
                 </div>
@@ -873,63 +873,67 @@ export default function ReceptionDashboard() {
             <div className="grid lg:grid-cols-3 gap-8">
 
               {/* Quick Walk-in */}
-              <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden h-fit">
-                <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa]">
-                  <h2 className="text-sm font-bold text-[#1a202c] flex items-center gap-2">
-                    <UserPlus className="h-4 w-4 text-[#01696f]" /> Quick Walk-in
+              <div className="relative bg-white/70 backdrop-blur-xl border border-white/40 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden h-fit transition-all duration-300 hover:shadow-[0_8px_30px_rgb(1,105,111,0.08)]">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#01696f] via-[#004e53] to-[#01696f]"></div>
+                <div className="px-6 py-5 border-b border-[#e9e9e7]/50 bg-white/50">
+                  <h2 className="text-sm font-bold text-[#1a202c] flex items-center gap-2 tracking-wide">
+                    <div className="p-1.5 bg-[#e6f3f4] rounded-lg shadow-inner">
+                      <UserPlus className="h-4 w-4 text-[#01696f]" />
+                    </div>
+                    Quick Walk-in
                   </h2>
                 </div>
                 <div className="p-6">
                   <div className="mb-5">
-                    <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1">Search via Phone</label>
+                    <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1.5">Search via Phone</label>
                     <div className="flex gap-2">
-                      <input type="text" maxLength={10} placeholder="Enter 10-digit phone" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-inner" value={searchPhone} onChange={(e) => { setSearchPhone(e.target.value); if (e.target.value.length === 10) handlePhoneSearch(); }} />
-                      <button onClick={handlePhoneSearch} className="px-3 bg-white hover:bg-[#f4f4f3] border border-[#e9e9e7] rounded-md shadow-xs text-[#1a202c] cursor-pointer"><Search className="h-4 w-4" /></button>
+                      <input type="text" maxLength={10} placeholder="Enter 10-digit phone" className="w-full px-4 py-2.5 border border-[#e9e9e7] bg-white/60 rounded-xl text-sm outline-none focus:border-[#01696f] focus:ring-4 focus:ring-[#01696f]/10 transition-all duration-200 placeholder:text-gray-400" value={searchPhone} onChange={(e) => { setSearchPhone(e.target.value); if (e.target.value.length === 10) handlePhoneSearch(); }} />
+                      <button onClick={handlePhoneSearch} className="px-4 bg-white hover:bg-[#f4f4f3] border border-[#e9e9e7] rounded-xl shadow-xs text-[#1a202c] cursor-pointer transition-transform active:scale-95"><Search className="h-4 w-4" /></button>
                     </div>
-                    {errorMessage && <span className="text-[10px] text-red-500 font-medium block mt-1">{errorMessage}</span>}
+                    {errorMessage && <span className="text-[10px] text-red-500 font-medium block mt-1.5 animate-in fade-in slide-in-from-top-1">{errorMessage}</span>}
                   </div>
 
-                  <form onSubmit={handleAddWalkIn} className="space-y-4 pt-4 border-t border-[#e9e9e7]">
+                  <form onSubmit={handleAddWalkIn} className="space-y-4 pt-5 border-t border-[#e9e9e7]/60">
                     <div>
-                      <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1">Patient Name *</label>
-                      <input type="text" required placeholder="Full Name" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-inner" value={patientName} onChange={(e) => setPatientName(e.target.value)} />
+                      <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1.5">Patient Name *</label>
+                      <input type="text" required placeholder="Full Name" className="w-full px-4 py-2.5 border border-[#e9e9e7] bg-white/60 rounded-xl text-sm outline-none focus:border-[#01696f] focus:ring-4 focus:ring-[#01696f]/10 transition-all duration-200" value={patientName} onChange={(e) => setPatientName(e.target.value)} />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1">Phone *</label>
-                        <input type="text" required placeholder="Phone" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-inner" value={patientPhone} onChange={(e) => setPatientPhone(e.target.value)} />
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1.5">Phone *</label>
+                        <input type="text" required placeholder="Phone" className="w-full px-4 py-2.5 border border-[#e9e9e7] bg-white/60 rounded-xl text-sm outline-none focus:border-[#01696f] focus:ring-4 focus:ring-[#01696f]/10 transition-all duration-200" value={patientPhone} onChange={(e) => setPatientPhone(e.target.value)} />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1">Age</label>
-                        <input type="number" placeholder="Age" className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-inner" value={patientAge} onChange={(e) => setPatientAge(e.target.value)} />
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1.5">Age</label>
+                        <input type="number" placeholder="Age" className="w-full px-4 py-2.5 border border-[#e9e9e7] bg-white/60 rounded-xl text-sm outline-none focus:border-[#01696f] focus:ring-4 focus:ring-[#01696f]/10 transition-all duration-200" value={patientAge} onChange={(e) => setPatientAge(e.target.value)} />
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1">Urgency</label>
-                        <select className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-xs" value={urgencyType} onChange={(e) => setUrgencyType(e.target.value)}>
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1.5">Urgency</label>
+                        <select className="w-full px-4 py-2.5 border border-[#e9e9e7] bg-white/60 rounded-xl text-sm outline-none focus:border-[#01696f] focus:ring-4 focus:ring-[#01696f]/10 transition-all duration-200" value={urgencyType} onChange={(e) => setUrgencyType(e.target.value)}>
                           <option value="GENERAL">General</option>
                           <option value="PRIORITY">Priority</option>
                           <option value="EMERGENCY">Emergency</option>
                         </select>
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1">Visit</label>
-                        <select className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-xs" value={visitType} onChange={(e) => setVisitType(e.target.value)}>
+                        <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1.5">Visit</label>
+                        <select className="w-full px-4 py-2.5 border border-[#e9e9e7] bg-white/60 rounded-xl text-sm outline-none focus:border-[#01696f] focus:ring-4 focus:ring-[#01696f]/10 transition-all duration-200" value={visitType} onChange={(e) => setVisitType(e.target.value)}>
                           <option value="NEW">New</option>
                           <option value="FOLLOW_UP">Follow-up</option>
                         </select>
                       </div>
                     </div>
                     <div className="relative">
-                      <div className="flex justify-between items-end mb-1">
+                      <div className="flex justify-between items-end mb-1.5">
                         <label className="block text-[10px] font-bold text-[#64748b] uppercase tracking-wider">Complaint</label>
                         <VoiceDictation 
                           onResult={(text) => setChiefComplaint(prev => prev ? `${prev} ${text}` : text)} 
                         />
                       </div>
-                      <textarea placeholder="Optional notes" rows={2} maxLength={300} className="w-full px-3 py-2 border border-[#e9e9e7] rounded-md text-sm outline-none focus:border-[#01696f] shadow-inner resize-none" value={chiefComplaint} onChange={(e) => setChiefComplaint(e.target.value)} />
-                      <span className="text-[10px] text-[#64748b] block text-right mt-0.5">{chiefComplaint.length}/300</span>
+                      <textarea placeholder="Optional notes" rows={2} maxLength={300} className="w-full px-4 py-2.5 border border-[#e9e9e7] bg-white/60 rounded-xl text-sm outline-none focus:border-[#01696f] focus:ring-4 focus:ring-[#01696f]/10 transition-all duration-200 resize-none" value={chiefComplaint} onChange={(e) => setChiefComplaint(e.target.value)} />
+                      <span className="text-[10px] text-[#64748b] block text-right mt-1">{chiefComplaint.length}/300</span>
                     </div>
 
                     {/* Capacity Indicator Helper */}
@@ -937,46 +941,50 @@ export default function ReceptionDashboard() {
                       const currentSeatedCount = activeQueue.filter(t => t.status === 'WAITING' && t.seatStatus === 'SEATED').length;
                       const hasSeat = currentSeatedCount < waitingSeats;
                       return (
-                        <div className={`p-2.5 rounded border text-xs font-semibold flex items-center justify-between ${
+                        <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center justify-between transition-colors ${
                           hasSeat 
-                            ? 'bg-[#e6f3f4]/40 border-[#01696f]/20 text-[#01696f]' 
-                            : 'bg-amber-50 border-amber-200 text-amber-800'
+                            ? 'bg-gradient-to-r from-[#e6f3f4] to-[#f4f4f3] border-[#01696f]/20 text-[#01696f]' 
+                            : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200 text-amber-800'
                         }`}>
                           <span>Next Token Seat:</span>
-                          <span className="font-bold flex items-center gap-1">
-                            <span className={`h-2.5 w-2.5 rounded-full ${hasSeat ? 'bg-[#01696f]' : 'bg-amber-500 animate-pulse'}`}></span>
+                          <span className="font-bold flex items-center gap-1.5">
+                            <span className={`h-2.5 w-2.5 rounded-full shadow-sm ${hasSeat ? 'bg-[#01696f]' : 'bg-amber-500 animate-pulse'}`}></span>
                             {hasSeat ? 'Physical Seat Available' : 'Virtual Queue (Wait Outside)'}
                           </span>
                         </div>
                       );
                     })()}
 
-                    <button type="submit" className="w-full py-2.5 bg-[#01696f] text-white text-sm font-bold rounded-md shadow-md hover:bg-[#005459] transition-colors cursor-pointer flex items-center justify-center gap-2">
-                      <Printer className="h-4 w-4" /> Issue Token
+                    <button type="submit" className="w-full py-3.5 bg-gradient-to-r from-[#01696f] to-[#004e53] text-white text-sm font-bold rounded-xl shadow-lg hover:shadow-xl hover:from-[#005459] hover:to-[#003b3f] transition-all duration-300 transform active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2 group mt-2">
+                      <Printer className="h-4 w-4 group-hover:scale-110 transition-transform duration-200" /> Issue Token
                     </button>
                   </form>
                 </div>
               </div>
 
               {/* Waiting Room Seats Manager */}
-              <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden h-fit">
-                <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa] flex items-center justify-between">
-                  <h2 className="text-sm font-bold text-[#1a202c] flex items-center gap-2">
-                    <Activity className="h-4 w-4 text-[#01696f]" /> Waiting Room Seats
+              <div className="relative bg-white/70 backdrop-blur-xl border border-white/40 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden h-fit transition-all duration-300 hover:shadow-[0_8px_30px_rgb(1,105,111,0.08)]">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200"></div>
+                <div className="px-6 py-5 border-b border-[#e9e9e7]/50 bg-white/50 flex items-center justify-between">
+                  <h2 className="text-sm font-bold text-[#1a202c] flex items-center gap-2 tracking-wide">
+                    <div className="p-1.5 bg-gray-100 rounded-lg shadow-inner">
+                      <Activity className="h-4 w-4 text-gray-700" />
+                    </div>
+                    Waiting Room
                   </h2>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 bg-[#f4f4f3] p-1 rounded-lg border border-[#e9e9e7]">
                     <button 
                       onClick={() => handleUpdateSeats(waitingSeats - 1)}
                       disabled={waitingSeats <= 1}
-                      className="w-6 h-6 border border-[#e9e9e7] rounded bg-white hover:bg-[#f4f4f3] disabled:opacity-50 font-bold text-xs text-[#1a202c] cursor-pointer shadow-xs flex items-center justify-center"
+                      className="w-7 h-7 rounded-md bg-white hover:bg-gray-50 disabled:opacity-50 font-bold text-xs text-[#1a202c] cursor-pointer shadow-sm flex items-center justify-center transition-transform active:scale-95"
                       title="Decrease seats capacity"
                     >
                       -
                     </button>
-                    <span className="text-xs font-bold text-[#1a202c]">{waitingSeats} Seats</span>
+                    <span className="text-xs font-bold text-[#1a202c] min-w-[3rem] text-center">{waitingSeats} Seats</span>
                     <button 
                       onClick={() => handleUpdateSeats(waitingSeats + 1)}
-                      className="w-6 h-6 border border-[#e9e9e7] rounded bg-white hover:bg-[#f4f4f3] font-bold text-xs text-[#1a202c] cursor-pointer shadow-xs flex items-center justify-center"
+                      className="w-7 h-7 rounded-md bg-white hover:bg-gray-50 font-bold text-xs text-[#1a202c] cursor-pointer shadow-sm flex items-center justify-center transition-transform active:scale-95"
                       title="Increase seats capacity"
                     >
                       +
@@ -994,24 +1002,24 @@ export default function ReceptionDashboard() {
                       return (
                         <div 
                           key={idx} 
-                          className={`aspect-square rounded-lg border flex flex-col items-center justify-center p-2 relative group transition-all duration-200 ${
+                          className={`aspect-square rounded-xl border flex flex-col items-center justify-center p-2 relative group transition-all duration-300 hover:-translate-y-1 ${
                             isOccupied 
-                              ? 'bg-[#e6f3f4] border-[#01696f]/40 text-[#01696f] shadow-xs' 
-                              : 'bg-[#fbfbfa] border-[#e9e9e7] text-gray-300'
+                              ? 'bg-gradient-to-br from-[#e6f3f4] to-white border-[#01696f]/30 text-[#01696f] shadow-md hover:shadow-lg hover:border-[#01696f]/50' 
+                              : 'bg-white border-dashed border-gray-300 text-gray-300 shadow-sm hover:border-gray-400'
                           }`}
                         >
-                          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <svg className={`w-5 h-5 transition-transform duration-300 ${isOccupied ? 'scale-110' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M7 10V17M17 10V17M5 20H19M5 17H19M7 5H17M7 10H17" strokeLinecap="round" strokeLinejoin="round"/>
                           </svg>
-                          <span className="text-[9px] mt-1 font-bold">
+                          <span className="text-[9px] mt-1.5 font-bold tracking-tight">
                             {isOccupied && patient ? patient.tokenNo : `Seat ${idx + 1}`}
                           </span>
                           
                           {/* Tooltip on hover */}
                           {isOccupied && patient && (
-                            <div className="absolute bottom-full mb-2 hidden group-hover:block z-30 bg-gray-900 text-white text-[10px] p-2 rounded shadow-md w-32 text-center left-1/2 -translate-x-1/2">
-                              <p className="font-bold">{patient.patientName}</p>
-                              <p className="text-[8px] text-gray-300">Wait: {patient.estimatedWait}m</p>
+                            <div className="absolute bottom-full mb-3 hidden group-hover:block z-30 bg-gradient-to-b from-gray-800 to-gray-900 text-white text-[10px] p-2.5 rounded-lg shadow-xl w-36 text-center left-1/2 -translate-x-1/2 animate-in fade-in slide-in-from-bottom-2">
+                              <p className="font-bold tracking-wide">{patient.patientName}</p>
+                              <p className="text-[9px] text-gray-300 mt-0.5 font-medium">Wait: <span className="text-amber-400 font-bold">{patient.estimatedWait}m</span></p>
                               <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
                             </div>
                           )}
@@ -1025,24 +1033,24 @@ export default function ReceptionDashboard() {
                     const outsidePatients = activeQueue.filter(t => t.status === 'WAITING' && t.seatStatus === 'WAITING_OUTSIDE');
                     const seatedCount = activeQueue.filter(t => t.status === 'WAITING' && t.seatStatus === 'SEATED').length;
                     return (
-                      <div className="mt-6 pt-4 border-t border-[#e9e9e7]">
-                        <div className="flex justify-between text-xs font-semibold text-[#64748b] mb-2">
-                          <span>Seated Patients: {seatedCount}/{waitingSeats}</span>
-                          <span>Waiting Outside: {outsidePatients.length}</span>
+                      <div className="mt-6 pt-5 border-t border-[#e9e9e7]/60">
+                        <div className="flex justify-between items-center text-xs font-semibold text-[#64748b] mb-3 bg-[#f4f4f3] p-2 rounded-lg">
+                          <span>Seated: <strong className="text-[#1a202c]">{seatedCount}/{waitingSeats}</strong></span>
+                          <span>Virtual: <strong className="text-[#1a202c]">{outsidePatients.length}</strong></span>
                         </div>
                         {outsidePatients.length > 0 ? (
-                          <div className="space-y-2 mt-2">
-                            <h4 className="text-[10px] font-bold text-amber-600 uppercase tracking-wider flex items-center gap-1">
-                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 inline-block animate-pulse"></span> Virtual Waitlist (Waiting Outside)
+                          <div className="space-y-3 mt-3">
+                            <h4 className="text-[10px] font-bold text-amber-700 uppercase tracking-widest flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-full bg-amber-500 inline-block shadow-[0_0_8px_rgba(245,158,11,0.6)] animate-pulse"></span> Virtual Waitlist
                             </h4>
-                            <div className="max-h-24 overflow-y-auto space-y-1.5 pr-1">
+                            <div className="max-h-24 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                               {outsidePatients.map(patient => (
-                                <div key={patient.id} className="flex justify-between items-center text-[11px] p-2 bg-amber-50/50 border border-amber-100 rounded-md">
+                                <div key={patient.id} className="flex justify-between items-center text-[11px] p-2.5 bg-gradient-to-r from-amber-50 to-orange-50/30 border border-amber-200/50 rounded-xl shadow-sm transition-all hover:shadow-md">
                                   <div>
                                     <span className="font-bold text-[#1a202c]">{patient.patientName}</span>
-                                    <span className="text-[9px] text-gray-500 ml-1">({patient.tokenNo})</span>
+                                    <span className="text-[9px] text-gray-500 font-medium ml-1.5">({patient.tokenNo})</span>
                                   </div>
-                                  <span className="font-bold text-amber-700">{patient.estimatedWait}m wait</span>
+                                  <span className="font-bold text-amber-700 bg-amber-100/50 px-2 py-0.5 rounded-full">{patient.estimatedWait}m wait</span>
                                 </div>
                               ))}
                             </div>

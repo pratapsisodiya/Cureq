@@ -65,6 +65,64 @@ router.post('/register', async (req, res) => {
 });
 
 /**
+ * @route   POST /api/auth/clerk-sync
+ * @desc    Sync user authenticated via Clerk with database (auto-register if new)
+ */
+router.post('/clerk-sync', async (req, res) => {
+  const { email, name, phone, role } = req.body;
+
+  if (!email || !name) {
+    return res.status(400).json({ error: 'Please provide email and name.' });
+  }
+
+  try {
+    // 1. Try to find user by email
+    let user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      // 2. If user doesn't exist, create a new one (as CLINIC_ADMIN by default)
+      user = await prisma.user.create({
+        data: {
+          email,
+          name,
+          phone: phone || null,
+          role: role || 'CLINIC_ADMIN',
+        },
+      });
+    } else {
+      // If user exists, optionally update phone and name if empty
+      const dataToUpdate: any = {};
+      if (!user.name && name) dataToUpdate.name = name;
+      if (!user.phone && phone) dataToUpdate.phone = phone;
+      
+      if (Object.keys(dataToUpdate).length > 0) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: dataToUpdate,
+        });
+      }
+    }
+
+    // 3. Generate token
+    const token = generateToken(user);
+    res.status(200).json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      },
+    });
+  } catch (err: any) {
+    console.error('Clerk sync error:', err);
+    res.status(500).json({ error: 'Server error during Clerk auth sync.' });
+  }
+});
+
+/**
  * @route   POST /api/auth/login
  * @desc    Login for Clinic Admin, Doctor, or Super Admin
  */
