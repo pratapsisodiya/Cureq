@@ -6,6 +6,7 @@ import { apiRequest } from '../../../src/utils/api';
 import { useClerkSync } from '../../../src/utils/useClerkSync';
 import { useUser } from '@clerk/nextjs';
 import VoiceDictation from '../../../src/components/VoiceDictation';
+import AITriage from '../../../src/components/AITriage';
 import { useToast } from '../../../src/components/Toast';
 import {
   Users, Activity, CheckCircle, AlertTriangle,
@@ -50,6 +51,12 @@ export default function ReceptionDashboard() {
   const [visitType, setVisitType] = useState('NEW');
   const [urgencyType, setUrgencyType] = useState('GENERAL');
   const [chiefComplaint, setChiefComplaint] = useState('');
+
+  // AI Workload balance
+  const [workloadAlert, setWorkloadAlert] = useState<{ recommendation: string; suggestedDoctorId: string; suggestedDoctorName: string } | null>(null);
+
+  // AI No-show risk per patient phone
+  const [noShowRisks, setNoShowRisks] = useState<Record<string, 'LOW' | 'MEDIUM' | 'HIGH'>>({});
 
   // UI state
   const [printToken, setPrintToken] = useState<TokenItem | null>(null);
@@ -200,11 +207,52 @@ export default function ReceptionDashboard() {
     if (branchId && selectedDoctorId) {
       fetchQueue(branchId, selectedDoctorId);
       initSocket(branchId);
+      checkWorkloadBalance(branchId);
     }
     return () => {
       disconnectSocket();
     };
   }, [branchId, selectedDoctorId]);
+
+  const checkWorkloadBalance = async (bid: string) => {
+    try {
+      const data = await apiRequest(`/ai/workload-balance/${bid}`);
+      if (!data.balanced && data.recommendation) {
+        setWorkloadAlert({
+          recommendation: data.recommendation,
+          suggestedDoctorId: data.suggestedDoctorId,
+          suggestedDoctorName: data.suggestedDoctorName,
+        });
+      } else {
+        setWorkloadAlert(null);
+      }
+    } catch {
+      // silently ignore — non-critical
+    }
+  };
+
+  // Compute no-show risk for WAITING patients when queue changes
+  useEffect(() => {
+    if (!clinicId || activeQueue.length === 0) return;
+    const waiting = activeQueue.filter(t => t.status === 'WAITING').slice(0, 8);
+    const unseenPhones = waiting.filter(t => !(t.patientPhone in noShowRisks));
+    if (unseenPhones.length === 0) return;
+
+    Promise.allSettled(
+      unseenPhones.map(t =>
+        apiRequest('/ai/noshow-risk', {
+          method: 'POST',
+          body: JSON.stringify({ patientPhone: t.patientPhone, clinicId }),
+        }).then(r => ({ phone: t.patientPhone, risk: r.risk as 'LOW' | 'MEDIUM' | 'HIGH' }))
+      )
+    ).then(results => {
+      const updates: Record<string, 'LOW' | 'MEDIUM' | 'HIGH'> = {};
+      results.forEach(r => {
+        if (r.status === 'fulfilled') updates[r.value.phone] = r.value.risk;
+      });
+      if (Object.keys(updates).length > 0) setNoShowRisks(prev => ({ ...prev, ...updates }));
+    });
+  }, [activeQueue.length, clinicId]);
 
   // Load patients when switching to Patients tab
   useEffect(() => {
@@ -809,7 +857,29 @@ export default function ReceptionDashboard() {
           <>
             {activeTab === 'Dashboard' && (
               <div className="p-8 max-w-7xl mx-auto w-full space-y-8 animate-in fade-in duration-300">
-                
+
+                {/* AI Workload Balance Alert */}
+                {workloadAlert && (
+                  <div className="flex items-start gap-3 px-5 py-3.5 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 shadow-sm animate-in fade-in slide-in-from-top-1 duration-300">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-amber-800">Queue Imbalance Detected</p>
+                      <p className="text-[11px] text-amber-700 mt-0.5">{workloadAlert.recommendation}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => { setSelectedDoctorId(workloadAlert.suggestedDoctorId); setWorkloadAlert(null); }}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold rounded-lg transition-colors"
+                      >
+                        Route Here
+                      </button>
+                      <button onClick={() => setWorkloadAlert(null)} className="text-amber-500 hover:text-amber-700">
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
               <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 flex flex-col justify-center shadow-xs">
@@ -934,6 +1004,14 @@ export default function ReceptionDashboard() {
                       </div>
                       <textarea placeholder="Optional notes" rows={2} maxLength={300} className="w-full px-4 py-2.5 border border-[#e9e9e7] bg-white/60 rounded-xl text-sm outline-none focus:border-[#01696f] focus:ring-4 focus:ring-[#01696f]/10 transition-all duration-200 resize-none" value={chiefComplaint} onChange={(e) => setChiefComplaint(e.target.value)} />
                       <span className="text-[10px] text-[#64748b] block text-right mt-1">{chiefComplaint.length}/300</span>
+                      <AITriage
+                        chiefComplaint={chiefComplaint}
+                        onApply={(urgency, speciality) => {
+                          setUrgencyType(urgency);
+                          const matchedDoc = doctorsList.find(d => d.speciality === speciality);
+                          if (matchedDoc) setSelectedDoctorId(matchedDoc.id);
+                        }}
+                      />
                     </div>
 
                     {/* Capacity Indicator Helper */}
@@ -1106,12 +1184,18 @@ export default function ReceptionDashboard() {
                             <td className="px-5 py-4 font-bold text-[#01696f]">{token.tokenNo}</td>
                             <td className="px-5 py-4">
                               <div className="font-semibold text-[#1a202c]">{token.patientName}</div>
-                              <div className="flex items-center gap-1.5 mt-0.5">
+                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                 <span className="text-[10px] text-[#64748b]">{token.patientPhone}</span>
                                 {token.appointmentId
                                   ? <span className="text-[8px] bg-blue-50 text-blue-600 border border-blue-200 px-1.5 py-0.5 rounded font-bold uppercase">Booked</span>
                                   : <span className="text-[8px] bg-gray-50 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded font-bold uppercase">Walk-in</span>
                                 }
+                                {noShowRisks[token.patientPhone] === 'HIGH' && (
+                                  <span title="High no-show risk" className="text-[8px] bg-red-50 text-red-600 border border-red-200 px-1.5 py-0.5 rounded font-bold uppercase">High Risk</span>
+                                )}
+                                {noShowRisks[token.patientPhone] === 'MEDIUM' && (
+                                  <span title="Medium no-show risk" className="text-[8px] bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded font-bold uppercase">Med Risk</span>
+                                )}
                               </div>
                             </td>
                             <td className="px-5 py-4">

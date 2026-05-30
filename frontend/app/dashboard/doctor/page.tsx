@@ -6,6 +6,9 @@ import { apiRequest } from '../../../src/utils/api';
 import { useClerkSync } from '../../../src/utils/useClerkSync';
 import { useUser } from '@clerk/nextjs';
 import VoiceDictation from '../../../src/components/VoiceDictation';
+import AISoapNotes from '../../../src/components/AISoapNotes';
+import AIPatientBrief from '../../../src/components/AIPatientBrief';
+import AIFollowupMessage from '../../../src/components/AIFollowupMessage';
 import { useToast } from '../../../src/components/Toast';
 import {
   Play, SkipForward, AlertCircle, Save, CheckCircle2,
@@ -926,6 +929,15 @@ export default function DoctorConsole() {
                         </div>
 
                         <div className="space-y-5">
+                          {/* AI Patient History Brief */}
+                          {clinicId && (
+                            <AIPatientBrief
+                              patientPhone={currentPatient.patientPhone}
+                              clinicId={clinicId}
+                              patientName={currentPatient.patientName}
+                            />
+                          )}
+
                           <div>
                             <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#64748b] mb-1">Chief Complaint</h4>
                             <p className="text-sm font-medium text-[#1a202c] bg-[#fbfbfa] p-3 rounded-md border border-[#e9e9e7]">
@@ -983,6 +995,18 @@ export default function DoctorConsole() {
                               placeholder="Type or dictate patient observations, diagnosis, and prescribed medications here..."
                               className="w-full h-40 p-4 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f] resize-none text-sm leading-relaxed shadow-inner"
                             ></textarea>
+                            <div className="mt-2 flex flex-wrap gap-2 items-start">
+                              <AISoapNotes
+                                rawNotes={consultNotes}
+                                onApply={(structured) => setConsultNotes(structured)}
+                              />
+                              <AIFollowupMessage
+                                consultNotes={consultNotes}
+                                patientName={currentPatient.patientName}
+                                doctorName={doctorName}
+                                followUpDate={followUpDate}
+                              />
+                            </div>
                           </div>
 
                           <div className="flex items-center gap-3 pt-2 border-t border-[#e9e9e7]">

@@ -11,6 +11,7 @@ import {
   LayoutDashboard, FileBarChart, ChevronLeft, Printer, Settings, Search, LogOut
 } from 'lucide-react';
 import Link from 'next/link';
+import AIOutbreakAlert from '../../../src/components/AIOutbreakAlert';
 
 export default function AnalyticsDashboard() {
   const [clinicId, setClinicId] = useState('');
@@ -416,6 +417,17 @@ export default function AnalyticsDashboard() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          {/* AI Symptom Outbreak Detector */}
+          <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden">
+            <div className="px-6 py-5 border-b border-[#e9e9e7] flex items-center gap-2 bg-[#fbfbfa]">
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+              <h3 className="font-bold text-base text-[#1a202c]">Symptom Outbreak Detector</h3>
+            </div>
+            <div className="p-4">
+              <AIOutbreakAlert clinicId={clinicId} />
             </div>
           </div>
 
