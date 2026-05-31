@@ -1,13 +1,17 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import { apiRequest } from '../../../src/utils/api';
 import { useClerkSync } from '../../../src/utils/useClerkSync';
 import { useToast } from '../../../src/components/Toast';
+import UserGuide from '../../../src/components/UserGuide';
 import {
   Receipt, Plus, CreditCard, CheckCircle2, X, Printer, Trash,
-  Activity, ArrowLeft, Loader2, User, Phone, Stethoscope, FileText, Search
+  Activity, ArrowLeft, Loader2, User, Phone, Stethoscope, FileText, Search,
+  LayoutDashboard, Users, Settings, Calendar, LogOut, MessageCircle
 } from 'lucide-react';
 
 interface InvoiceItem {
@@ -39,6 +43,7 @@ const DEFAULT_ITEMS: InvoiceItem[] = [{ description: 'Consultation Fee', qty: 1,
 
 export default function BillingDashboard() {
   const { syncing, isSignedIn } = useClerkSync();
+  const { user } = useUser();
   const router = useRouter();
   const { showToast, ToastComponent } = useToast();
 
@@ -228,10 +233,92 @@ export default function BillingDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] font-sans">
+    <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] font-sans flex flex-col md:flex-row selection:bg-[#01696f]/20">
       {ToastComponent}
+      <UserGuide />
 
-      <header className="bg-white border-b border-[#e9e9e7] px-6 py-4 flex items-center gap-4 sticky top-0 z-10 shadow-xs">
+      {/* Sidebar */}
+      <aside className="w-full md:w-64 bg-white border-r border-[#e9e9e7] flex flex-col h-auto md:h-screen sticky top-0 z-20 shadow-xs shrink-0">
+        <div className="p-6 border-b border-[#e9e9e7] flex items-center gap-2">
+          <Activity className="h-6 w-6 text-[#01696f]" />
+          <span className="font-serif text-xl font-bold tracking-tight text-[#1a202c]">CureQ</span>
+        </div>
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          <Link href="/dashboard/reception?tab=Dashboard" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <LayoutDashboard className="h-4 w-4" /> Dashboard
+          </Link>
+          <Link href="/dashboard/reception?tab=Patients" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <Users className="h-4 w-4" /> Patient Records
+          </Link>
+          <Link href="/dashboard/reception?tab=Settings" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <Settings className="h-4 w-4" /> Clinic Settings
+          </Link>
+          <Link href="/dashboard/reception?tab=All%20Queues" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <Activity className="h-4 w-4" /> All Queues
+          </Link>
+          <Link href="/dashboard/reception?tab=Waitlist" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <Calendar className="h-4 w-4" /> Waitlist
+          </Link>
+          <div className="pt-2 border-t border-[#e9e9e7] mt-2">
+            <div className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm bg-[#f4f4f3] text-[#01696f]">
+              <Receipt className="h-4 w-4" /> Billing
+            </div>
+            <Link href="/dashboard/chatbot" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#01696f] transition-colors">
+              <MessageCircle className="h-4 w-4" /> AI Chatbot
+            </Link>
+            <Link href="/dashboard/analytics" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#01696f] transition-colors">
+              <Activity className="h-4 w-4" /> Analytics
+            </Link>
+            <Link href="/dashboard/doctor" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+              <Users className="h-4 w-4" /> Doctor Console
+            </Link>
+            <Link href="/patient/portal" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+              <Search className="h-4 w-4" /> Patient Portal
+            </Link>
+            {clinicId && (
+              <a href={`/waitlist/${clinicId}`} target="_blank" rel="noopener noreferrer" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+                <Calendar className="h-4 w-4" /> Pre-Register (Public)
+              </a>
+            )}
+          </div>
+        </nav>
+        <div className="p-4 border-t border-[#e9e9e7]">
+          <button
+            onClick={() => {
+              if (confirm('Sign out and clear session?')) {
+                localStorage.removeItem('cureq_token');
+                localStorage.removeItem('cureq_role');
+                localStorage.removeItem('cureq_clinic_id');
+                localStorage.removeItem('cureq_branch_id');
+                localStorage.removeItem('cureq_active_doctor_id');
+                window.location.href = '/login';
+              }
+            }}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-xs text-red-600 hover:bg-red-50 transition-colors cursor-pointer mb-3"
+            aria-label="Sign Out"
+          >
+            <LogOut className="h-3.5 w-3.5" /> Sign Out
+          </button>
+          <div className="flex items-center gap-3">
+            {user?.imageUrl ? (
+              <img src={user.imageUrl} alt="Avatar" className="h-10 w-10 rounded-full object-cover border border-[#e9e9e7]" />
+            ) : (
+              <div className="h-10 w-10 rounded-full bg-[#e6f3f4] text-[#01696f] flex items-center justify-center font-bold">
+                {user?.fullName ? user.fullName.charAt(0) : 'R'}
+              </div>
+            )}
+            <div>
+              <p className="text-sm font-semibold truncate max-w-[140px]" title={user?.fullName || 'Receptionist'}>
+                {user?.fullName || 'Receptionist'}
+              </p>
+              <p className="text-xs text-[#64748b]">Front Desk</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div className="flex-1 flex flex-col min-h-screen overflow-y-auto">
+        <header className="bg-white border-b border-[#e9e9e7] px-6 py-4 flex items-center gap-4 sticky top-0 z-10 shadow-xs">
         <button onClick={() => router.back()} className="p-1.5 rounded-md hover:bg-[#f4f4f3] text-[#64748b] transition-colors">
           <ArrowLeft className="h-4 w-4" />
         </button>
@@ -505,6 +592,7 @@ export default function BillingDashboard() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

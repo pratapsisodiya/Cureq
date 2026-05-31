@@ -39,6 +39,14 @@ export default function OnboardingPage() {
   const [adminPhone, setAdminPhone] = useState('');
   const [clinicName, setClinicName] = useState('');
 
+  // Step 2: Speciality tag select
+  const [selectedSpecialities, setSelectedSpecialities] = useState<string[]>([]);
+
+  // Step 3: Doctors profiles
+  const [doctors, setDoctors] = useState([
+    { name: '', email: '', password: 'DoctorCureQ123!', phone: '', speciality: '', schedules: [{ dayOfWeek: '1', startTime: '09:00', endTime: '17:00', slotDuration: '15', maxPatients: '30', bufferTime: '5' }] }
+  ]);
+
   // Automatically fill email/name if logged in via Clerk
   useEffect(() => {
     if (user) {
@@ -58,14 +66,6 @@ export default function OnboardingPage() {
       </div>
     );
   }
-  
-  // Step 2: Speciality tag select
-  const [selectedSpecialities, setSelectedSpecialities] = useState<string[]>([]);
-
-  // Step 3: Doctors profiles
-  const [doctors, setDoctors] = useState([
-    { name: '', email: '', password: 'DoctorCureQ123!', phone: '', speciality: '', schedules: [{ dayOfWeek: '1', startTime: '09:00', endTime: '17:00', slotDuration: '15', maxPatients: '30', bufferTime: '5' }] }
-  ]);
 
   const toggleSpeciality = (spec: string) => {
     if (selectedSpecialities.includes(spec)) {

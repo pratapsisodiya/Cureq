@@ -1,13 +1,18 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import { apiRequest } from '../../../src/utils/api';
 import { useClerkSync } from '../../../src/utils/useClerkSync';
 import { useToast } from '../../../src/components/Toast';
+import UserGuide from '../../../src/components/UserGuide';
 import {
   MessageCircle, Bot, Plus, Trash, Save, ArrowLeft, Activity,
-  Loader2, CheckCircle2, Globe, Zap, Lock, MessageSquare, ChevronDown, ChevronRight, X
+  Loader2, CheckCircle2, Globe, Zap, Lock, MessageSquare, ChevronDown, ChevronRight, X,
+  LayoutDashboard, Users, Settings, Calendar, Search, LogOut, Receipt,
+  Share2, Copy, Code
 } from 'lucide-react';
 
 interface FAQPair { question: string; answer: string }
@@ -55,6 +60,7 @@ const DEFAULT_CONFIG: ChatConfig = {
 
 export default function ChatbotConfigurator() {
   const { syncing, isSignedIn } = useClerkSync();
+  const { user } = useUser();
   const router = useRouter();
   const { showToast, ToastComponent } = useToast();
 
@@ -180,10 +186,92 @@ export default function ChatbotConfigurator() {
   }
 
   return (
-    <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] font-sans">
+    <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] font-sans flex flex-col md:flex-row selection:bg-[#01696f]/20">
       {ToastComponent}
+      <UserGuide />
 
-      <header className="bg-white border-b border-[#e9e9e7] px-6 py-4 flex items-center gap-4 sticky top-0 z-10 shadow-xs">
+      {/* Sidebar */}
+      <aside className="w-full md:w-64 bg-white border-r border-[#e9e9e7] flex flex-col h-auto md:h-screen sticky top-0 z-20 shadow-xs shrink-0">
+        <div className="p-6 border-b border-[#e9e9e7] flex items-center gap-2">
+          <Activity className="h-6 w-6 text-[#01696f]" />
+          <span className="font-serif text-xl font-bold tracking-tight text-[#1a202c]">CureQ</span>
+        </div>
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          <Link href="/dashboard/reception?tab=Dashboard" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <LayoutDashboard className="h-4 w-4" /> Dashboard
+          </Link>
+          <Link href="/dashboard/reception?tab=Patients" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <Users className="h-4 w-4" /> Patient Records
+          </Link>
+          <Link href="/dashboard/reception?tab=Settings" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <Settings className="h-4 w-4" /> Clinic Settings
+          </Link>
+          <Link href="/dashboard/reception?tab=All%20Queues" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <Activity className="h-4 w-4" /> All Queues
+          </Link>
+          <Link href="/dashboard/reception?tab=Waitlist" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+            <Calendar className="h-4 w-4" /> Waitlist
+          </Link>
+          <div className="pt-2 border-t border-[#e9e9e7] mt-2">
+            <Link href="/dashboard/billing" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+              <Receipt className="h-4 w-4" /> Billing
+            </Link>
+            <div className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm bg-[#f4f4f3] text-[#01696f]">
+              <MessageCircle className="h-4 w-4" /> AI Chatbot
+            </div>
+            <Link href="/dashboard/analytics" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+              <Activity className="h-4 w-4" /> Analytics
+            </Link>
+            <Link href="/dashboard/doctor" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+              <Users className="h-4 w-4" /> Doctor Console
+            </Link>
+            <Link href="/patient/portal" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+              <Search className="h-4 w-4" /> Patient Portal
+            </Link>
+            {clinicId && (
+              <a href={`/waitlist/${clinicId}`} target="_blank" rel="noopener noreferrer" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c] transition-colors">
+                <Calendar className="h-4 w-4" /> Pre-Register (Public)
+              </a>
+            )}
+          </div>
+        </nav>
+        <div className="p-4 border-t border-[#e9e9e7]">
+          <button
+            onClick={() => {
+              if (confirm('Sign out and clear session?')) {
+                localStorage.removeItem('cureq_token');
+                localStorage.removeItem('cureq_role');
+                localStorage.removeItem('cureq_clinic_id');
+                localStorage.removeItem('cureq_branch_id');
+                localStorage.removeItem('cureq_active_doctor_id');
+                window.location.href = '/login';
+              }
+            }}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-xs text-red-600 hover:bg-red-50 transition-colors cursor-pointer mb-3"
+            aria-label="Sign Out"
+          >
+            <LogOut className="h-3.5 w-3.5" /> Sign Out
+          </button>
+          <div className="flex items-center gap-3">
+            {user?.imageUrl ? (
+              <img src={user.imageUrl} alt="Avatar" className="h-10 w-10 rounded-full object-cover border border-[#e9e9e7]" />
+            ) : (
+              <div className="h-10 w-10 rounded-full bg-[#e6f3f4] text-[#01696f] flex items-center justify-center font-bold">
+                {user?.fullName ? user.fullName.charAt(0) : 'R'}
+              </div>
+            )}
+            <div>
+              <p className="text-sm font-semibold truncate max-w-[140px]" title={user?.fullName || 'Receptionist'}>
+                {user?.fullName || 'Receptionist'}
+              </p>
+              <p className="text-xs text-[#64748b]">Front Desk</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div className="flex-1 flex flex-col min-h-screen overflow-y-auto">
+        <header className="bg-white border-b border-[#e9e9e7] px-6 py-4 flex items-center gap-4 sticky top-0 z-10 shadow-xs">
         <button onClick={() => router.back()} className="p-1.5 rounded-md hover:bg-[#f4f4f3] text-[#64748b] transition-colors">
           <ArrowLeft className="h-4 w-4" />
         </button>
@@ -226,18 +314,60 @@ export default function ChatbotConfigurator() {
             {/* Left — Editor */}
             <div className="lg:col-span-2 space-y-5">
 
+              {/* Share & Embed */}
+              <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 shadow-xs">
+                <h2 className="font-bold text-[#1a202c] mb-2 flex items-center gap-2">
+                  <Share2 className="h-4 w-4 text-[#01696f]" /> Share & Embed Chatbot
+                </h2>
+                <p className="text-[11px] text-[#64748b] mb-4">
+                  Make your CureQ AI Chatbot accessible to patients by sharing a direct link or embedding it on your own clinic website.
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-[#64748b] mb-1">Direct Share Link</label>
+                    <div className="flex gap-2">
+                      <input readOnly value={typeof window !== 'undefined' ? `${window.location.origin}/patient/portal?clinicId=${clinicId}` : ''}
+                        className="flex-1 px-3 py-2 border border-[#e9e9e7] bg-[#fbfbfa] rounded-lg text-xs font-mono focus:outline-none" />
+                      <button onClick={() => {
+                        if (typeof window !== 'undefined') {
+                          navigator.clipboard.writeText(`${window.location.origin}/patient/portal?clinicId=${clinicId}`);
+                          showToast('Direct link copied to clipboard!', 'success');
+                        }
+                      }} className="flex items-center gap-1.5 px-3 py-2 bg-[#f4f4f3] hover:bg-[#e9e9e7] text-[#1a202c] border border-[#e9e9e7] rounded-lg text-xs font-semibold transition-colors">
+                        <Copy className="h-3.5 w-3.5" /> Copy
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-[#64748b] mb-1">Embed on Clinic Website (iframe)</label>
+                    <div className="flex gap-2">
+                      <input readOnly value={typeof window !== 'undefined' ? `<iframe src="${window.location.origin}/patient/portal?clinicId=${clinicId}" style="border:none; width:400px; height:600px; position:fixed; bottom:20px; right:20px; z-index:99999;" allow="clipboard-write"></iframe>` : ''}
+                        className="flex-1 px-3 py-2 border border-[#e9e9e7] bg-[#fbfbfa] rounded-lg text-xs font-mono focus:outline-none" />
+                      <button onClick={() => {
+                        if (typeof window !== 'undefined') {
+                          navigator.clipboard.writeText(`<iframe src="${window.location.origin}/patient/portal?clinicId=${clinicId}" style="border:none; width:400px; height:600px; position:fixed; bottom:20px; right:20px; z-index:99999;" allow="clipboard-write"></iframe>`);
+                          showToast('Embed iframe snippet copied to clipboard!', 'success');
+                        }
+                      }} className="flex items-center gap-1.5 px-3 py-2 bg-[#f4f4f3] hover:bg-[#e9e9e7] text-[#1a202c] border border-[#e9e9e7] rounded-lg text-xs font-semibold transition-colors">
+                        <Code className="h-3.5 w-3.5" /> Copy
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Branding */}
               <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 shadow-xs">
                 <h2 className="font-bold text-[#1a202c] mb-4 flex items-center gap-2"><Bot className="h-4 w-4 text-[#01696f]" /> Branding & Identity</h2>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-[11px] font-bold uppercase tracking-wider text-[#64748b] mb-1.5">Bot Name</label>
-                    <input value={config.botName} onChange={e => setConfig(c => ({ ...c, botName: e.target.value }))} placeholder="e.g. HealthBot, Dr. Helper"
+                    <input value={config.botName || ''} onChange={e => setConfig(c => ({ ...c, botName: e.target.value }))} placeholder="e.g. HealthBot, Dr. Helper"
                       className="w-full px-3 py-2.5 border border-[#e9e9e7] rounded-lg text-sm focus:outline-none focus:border-[#01696f]" />
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold uppercase tracking-wider text-[#64748b] mb-1.5">Greeting Message</label>
-                    <textarea value={config.greeting} onChange={e => setConfig(c => ({ ...c, greeting: e.target.value }))} rows={3}
+                    <textarea value={config.greeting || ''} onChange={e => setConfig(c => ({ ...c, greeting: e.target.value }))} rows={3}
                       placeholder="Hello! How can I help you today?"
                       className="w-full px-3 py-2.5 border border-[#e9e9e7] rounded-lg text-sm focus:outline-none focus:border-[#01696f] resize-none" />
                   </div>
@@ -245,15 +375,15 @@ export default function ChatbotConfigurator() {
                     <div>
                       <label className="block text-[11px] font-bold uppercase tracking-wider text-[#64748b] mb-1.5">Brand Color</label>
                       <div className="flex gap-2 items-center">
-                        <input type="color" value={config.primaryColor} onChange={e => setConfig(c => ({ ...c, primaryColor: e.target.value }))}
+                        <input type="color" value={config.primaryColor || ''} onChange={e => setConfig(c => ({ ...c, primaryColor: e.target.value }))}
                           className="h-10 w-12 rounded border border-[#e9e9e7] cursor-pointer p-0.5" />
-                        <input value={config.primaryColor} onChange={e => setConfig(c => ({ ...c, primaryColor: e.target.value }))} placeholder="#01696f"
+                        <input value={config.primaryColor || ''} onChange={e => setConfig(c => ({ ...c, primaryColor: e.target.value }))} placeholder="#01696f"
                           className="flex-1 px-3 py-2 border border-[#e9e9e7] rounded-lg text-sm font-mono focus:outline-none focus:border-[#01696f]" />
                       </div>
                     </div>
                     <div>
                       <label className="block text-[11px] font-bold uppercase tracking-wider text-[#64748b] mb-1.5">Widget Position</label>
-                      <select value={config.widgetPosition} onChange={e => setConfig(c => ({ ...c, widgetPosition: e.target.value }))}
+                      <select value={config.widgetPosition || ''} onChange={e => setConfig(c => ({ ...c, widgetPosition: e.target.value }))}
                         className="w-full px-3 py-2.5 border border-[#e9e9e7] rounded-lg text-sm focus:outline-none focus:border-[#01696f] bg-white appearance-none">
                         <option value="bottom-right">Bottom Right</option>
                         <option value="bottom-left">Bottom Left</option>
@@ -266,7 +396,7 @@ export default function ChatbotConfigurator() {
               {/* Language */}
               <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 shadow-xs">
                 <h2 className="font-bold text-[#1a202c] mb-4 flex items-center gap-2"><Globe className="h-4 w-4 text-[#01696f]" /> Language</h2>
-                <select value={config.language} onChange={e => setConfig(c => ({ ...c, language: e.target.value }))}
+                <select value={config.language || ''} onChange={e => setConfig(c => ({ ...c, language: e.target.value }))}
                   className="w-full px-3 py-2.5 border border-[#e9e9e7] rounded-lg text-sm focus:outline-none focus:border-[#01696f] bg-white appearance-none">
                   {LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                 </select>
@@ -331,7 +461,7 @@ export default function ChatbotConfigurator() {
               <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 shadow-xs">
                 <h2 className="font-bold text-[#1a202c] mb-2">Advanced — Custom Instructions</h2>
                 <p className="text-[11px] text-[#64748b] mb-3">Add clinic-specific personality or constraints. Examples: "This is a paediatric-only clinic." / "We charge ₹300 for consultations." / "Do not discuss dental procedures."</p>
-                <textarea value={config.systemPromptExt} onChange={e => setConfig(c => ({ ...c, systemPromptExt: e.target.value }))} rows={4}
+                <textarea value={config.systemPromptExt || ''} onChange={e => setConfig(c => ({ ...c, systemPromptExt: e.target.value }))} rows={4}
                   placeholder="e.g. Our clinic specialises in diabetic care. Always mention that patients with diabetes should bring their blood sugar logs."
                   className="w-full px-3 py-2.5 border border-[#e9e9e7] rounded-lg text-sm focus:outline-none focus:border-[#01696f] resize-none" />
               </div>
@@ -484,6 +614,7 @@ export default function ChatbotConfigurator() {
           </div>
         )}
       </main>
+      </div>
     </div>
   );
 }

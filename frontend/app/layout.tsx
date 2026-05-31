@@ -1,10 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { ClerkProvider } from '@clerk/nextjs';
 import PWAInstaller from '../src/components/PWAInstaller';
-import dynamic from 'next/dynamic';
+import ChatWidget from '../src/components/ChatWidget';
 import "./globals.css";
-
-const ChatWidget = dynamic(() => import('../src/components/ChatWidget'), { ssr: false });
 
 export const viewport: Viewport = {
   themeColor: '#01696f',
