@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { io, Socket } from 'socket.io-client';
-import { apiRequest, BACKEND_URL } from '../utils/api';
+import { api, BACKEND_URL } from '../utils/api';
 
 export interface TokenItem {
   id: string;
@@ -27,6 +27,17 @@ export interface DoctorBreakInfo {
   resumeAt: string | null;
 }
 
+// Granular per-action loading flags so the UI can show targeted spinners
+interface LoadingFlags {
+  queue: boolean;     // fetchQueue
+  callNext: boolean;
+  skip: boolean;
+  noShow: boolean;
+  reorder: boolean;
+  addToken: boolean;
+  seats: boolean;
+}
+
 interface QueueState {
   activeQueue: TokenItem[];
   servedToday: TokenItem[];
@@ -34,24 +45,45 @@ interface QueueState {
   noShowToday: TokenItem[];
 
   socket: Socket | null;
+  isConnected: boolean;
   lastCalledToken: { tokenNo: string; doctorName: string } | null;
   broadcastAlert: string | null;
   doctorBreakStatus: Record<string, DoctorBreakInfo>;
-  loading: boolean;
+
+  // loading.queue replaces the old flat `loading` boolean
+  loading: LoadingFlags;
   error: string | null;
 
+  // Actions
   fetchQueue: (branchId: string, doctorId: string) => Promise<void>;
   initSocket: (branchId: string) => void;
   disconnectSocket: () => void;
-  
+  clearError: () => void;
+
   // Doctor operations
   callNext: (branchId: string, doctorId: string, notes?: string, followUpDate?: string) => Promise<void>;
   skipToken: (branchId: string, doctorId: string, tokenId: string) => Promise<void>;
   markNoShow: (branchId: string, doctorId: string, tokenId: string) => Promise<void>;
   recallToken: (branchId: string, tokenNo: string, doctorName: string) => Promise<void>;
   reorderQueue: (branchId: string, doctorId: string, tokenIds: string[]) => Promise<void>;
-  addToken: (branchId: string, payload: any) => Promise<void>;
+  addToken: (branchId: string, payload: Record<string, unknown>) => Promise<void>;
   updateSeatsCapacity: (clinicId: string, branchId: string, seats: number) => Promise<void>;
+}
+
+const DEFAULT_LOADING: LoadingFlags = {
+  queue: false,
+  callNext: false,
+  skip: false,
+  noShow: false,
+  reorder: false,
+  addToken: false,
+  seats: false,
+};
+
+function setLoading(key: keyof LoadingFlags, value: boolean) {
+  return (state: QueueState) => ({
+    loading: { ...state.loading, [key]: value },
+  });
 }
 
 export const useQueueStore = create<QueueState>((set, get) => ({
@@ -60,49 +92,71 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   skippedToday: [],
   noShowToday: [],
   socket: null,
+  isConnected: false,
   lastCalledToken: null,
   broadcastAlert: null,
   doctorBreakStatus: {},
-  loading: false,
+  loading: DEFAULT_LOADING,
   error: null,
 
+  clearError: () => set({ error: null }),
+
   fetchQueue: async (branchId, doctorId) => {
-    set({ loading: true, error: null });
+    set(setLoading('queue', true));
+    set({ error: null });
     try {
-      const data = await apiRequest(`/queues/${branchId}/live?doctorId=${doctorId}`);
+      const data = await api.get<{
+        active: TokenItem[];
+        served: TokenItem[];
+        skipped: TokenItem[];
+        noshow: TokenItem[];
+      }>(`/queues/${branchId}/live?doctorId=${doctorId}`);
+
       set({
-        activeQueue: data.active || [],
-        servedToday: data.served || [],
-        skippedToday: data.skipped || [],
-        noShowToday: data.noshow || [],
-        loading: false,
+        activeQueue: data.active ?? [],
+        servedToday: data.served ?? [],
+        skippedToday: data.skipped ?? [],
+        noShowToday: data.noshow ?? [],
       });
     } catch (err: any) {
-      set({ error: err.message, loading: false });
+      set({ error: err.message });
+    } finally {
+      set(setLoading('queue', false));
     }
   },
 
   initSocket: (branchId) => {
-    const currentSocket = get().socket;
-    if (currentSocket) return; // Already initialized
+    // Prevent duplicate socket connections
+    const existing = get().socket;
+    if (existing?.connected) return;
 
-    const socketUrl = BACKEND_URL;
-    const newSocket = io(socketUrl);
+    const newSocket = io(BACKEND_URL, {
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 8000,
+    });
 
     newSocket.on('connect', () => {
-      console.log('📶 Connected to CureQ Socket Server');
+      set({ isConnected: true });
+      newSocket.emit('join:branch', branchId);
+    });
+
+    newSocket.on('disconnect', () => {
+      set({ isConnected: false });
+    });
+
+    // Rejoin the branch room on every reconnect so state stays current
+    newSocket.on('reconnect', () => {
       newSocket.emit('join:branch', branchId);
     });
 
     newSocket.on('queue:updated', (data: { doctorId: string; queue: TokenItem[] }) => {
-      // Updates the local active queue immediately
       set({ activeQueue: data.queue });
     });
 
     newSocket.on('token:called', (data: { tokenNo: string; doctorName: string }) => {
       set({ lastCalledToken: data });
-      
-      // Text-To-Speech audio announcement for waiting rooms
+
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
         const text = `Token number ${data.tokenNo.replace('-', ' ')}, please proceed to Doctor ${data.doctorName}'s chamber.`;
@@ -110,15 +164,13 @@ export const useQueueStore = create<QueueState>((set, get) => ({
         utterance.rate = 0.9;
         window.speechSynthesis.speak(utterance);
       }
-      
-      // Auto-clear called state banner after 10 seconds
+
       setTimeout(() => {
-        set((state) => {
-          if (state.lastCalledToken?.tokenNo === data.tokenNo) {
-            return { lastCalledToken: null };
-          }
-          return {};
-        });
+        set((state) =>
+          state.lastCalledToken?.tokenNo === data.tokenNo
+            ? { lastCalledToken: null }
+            : {}
+        );
       }, 10000);
     });
 
@@ -127,17 +179,20 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       setTimeout(() => set({ broadcastAlert: null }), 15000);
     });
 
-    newSocket.on('doctor:break', (data: { doctorId: string; doctorName: string; onBreak: boolean; resumeAt: string | null }) => {
-      set(state => {
-        const updated = { ...state.doctorBreakStatus };
-        if (data.onBreak) {
-          updated[data.doctorId] = { doctorName: data.doctorName, resumeAt: data.resumeAt };
-        } else {
-          delete updated[data.doctorId];
-        }
-        return { doctorBreakStatus: updated };
-      });
-    });
+    newSocket.on(
+      'doctor:break',
+      (data: { doctorId: string; doctorName: string; onBreak: boolean; resumeAt: string | null }) => {
+        set((state) => {
+          const updated = { ...state.doctorBreakStatus };
+          if (data.onBreak) {
+            updated[data.doctorId] = { doctorName: data.doctorName, resumeAt: data.resumeAt };
+          } else {
+            delete updated[data.doctorId];
+          }
+          return { doctorBreakStatus: updated };
+        });
+      }
+    );
 
     set({ socket: newSocket });
   },
@@ -146,87 +201,95 @@ export const useQueueStore = create<QueueState>((set, get) => ({
     const s = get().socket;
     if (s) {
       s.disconnect();
-      set({ socket: null });
+      set({ socket: null, isConnected: false });
     }
   },
 
   callNext: async (branchId, doctorId, notes, followUpDate) => {
+    set(setLoading('callNext', true));
     try {
-      await apiRequest(`/queues/${branchId}/next`, {
-        method: 'POST',
-        body: JSON.stringify({ doctorId, notes, followUpDate: followUpDate || null }),
+      await api.post(`/queues/${branchId}/next`, {
+        doctorId,
+        notes,
+        followUpDate: followUpDate ?? null,
       });
-      // Rest of state is synchronized in the queue:updated event callback
+      // State update comes through queue:updated socket event
     } catch (err: any) {
       set({ error: err.message });
+      throw err;
+    } finally {
+      set(setLoading('callNext', false));
     }
   },
 
   skipToken: async (branchId, doctorId, tokenId) => {
+    set(setLoading('skip', true));
     try {
-      await apiRequest(`/queues/${branchId}/skip`, {
-        method: 'POST',
-        body: JSON.stringify({ tokenId, doctorId }),
-      });
+      await api.post(`/queues/${branchId}/skip`, { tokenId, doctorId });
     } catch (err: any) {
       set({ error: err.message });
+      throw err;
+    } finally {
+      set(setLoading('skip', false));
     }
   },
 
   markNoShow: async (branchId, doctorId, tokenId) => {
+    set(setLoading('noShow', true));
     try {
-      await apiRequest(`/queues/${branchId}/noshow`, {
-        method: 'POST',
-        body: JSON.stringify({ tokenId, doctorId }),
-      });
+      await api.post(`/queues/${branchId}/noshow`, { tokenId, doctorId });
     } catch (err: any) {
       set({ error: err.message });
+      throw err;
+    } finally {
+      set(setLoading('noShow', false));
     }
   },
 
   recallToken: async (branchId, tokenNo, doctorName) => {
     try {
-      await apiRequest(`/queues/${branchId}/recall`, {
-        method: 'POST',
-        body: JSON.stringify({ tokenNo, doctorName }),
-      });
+      await api.post(`/queues/${branchId}/recall`, { tokenNo, doctorName });
     } catch (err: any) {
       set({ error: err.message });
+      throw err;
     }
   },
 
   reorderQueue: async (branchId, doctorId, tokenIds) => {
+    set(setLoading('reorder', true));
     try {
-      await apiRequest(`/queues/${branchId}/reorder`, {
-        method: 'POST',
-        body: JSON.stringify({ doctorId, tokenIds }),
-      });
+      await api.post(`/queues/${branchId}/reorder`, { doctorId, tokenIds });
     } catch (err: any) {
       set({ error: err.message });
+      throw err;
+    } finally {
+      set(setLoading('reorder', false));
     }
   },
 
   addToken: async (branchId, payload) => {
+    set(setLoading('addToken', true));
     try {
-      await apiRequest(`/queues/${branchId}/token`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
+      await api.post(`/queues/${branchId}/token`, payload);
     } catch (err: any) {
       set({ error: err.message });
       throw err;
+    } finally {
+      set(setLoading('addToken', false));
     }
   },
-  
+
   updateSeatsCapacity: async (clinicId, branchId, seats) => {
+    set(setLoading('seats', true));
     try {
-      await apiRequest(`/clinics/${clinicId}/branches/${branchId}/seats`, {
-        method: 'PUT',
-        body: JSON.stringify({ waitingSeats: seats }),
+      await api.put(`/clinics/${clinicId}/branches/${branchId}/seats`, {
+        waitingSeats: seats,
       });
     } catch (err: any) {
       set({ error: err.message });
       throw err;
+    } finally {
+      set(setLoading('seats', false));
     }
   },
 }));
