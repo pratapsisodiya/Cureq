@@ -86,9 +86,10 @@ model Clinic {
   active      Boolean          @default(true)
   adminId     String           @unique
   admin       User             @relation("ClinicAdmin", fields: [adminId], references: [id], onDelete: Cascade)
-  branches    Branch[]
-  holidays    ClinicHoliday[]   @relation("ClinicHolidays")
-  auditLogs   AuditLog[]        @relation("ClinicAuditLogs")
+  branches      Branch[]
+  holidays      ClinicHoliday[]   @relation("ClinicHolidays")
+  auditLogs     AuditLog[]        @relation("ClinicAuditLogs")
+  chatBotConfig ChatBotConfig?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 }
@@ -213,14 +214,44 @@ model VisitLog {
   specialty      String
   chiefComplaint String?
   notes          String?   // Prescription / Consultation notes
+  prescription   String?   // JSON stringified AI prescription data
   followUpDate   String?   // YYYY-MM-DD or custom text
   rating         Int?      // 1-5 stars patient feedback
   ratingComment  String?
 
   patientId      String
   patient        User      @relation("PatientHistory", fields: [patientId], references: [id], onDelete: Cascade)
-  
+
   createdAt      DateTime  @default(now())
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
+model Invoice {
+  id            String        @id @default(uuid())
+  invoiceNo     String        @unique
+  patientName   String
+  patientPhone  String
+  patientId     String?
+  doctorName    String
+  doctorId      String
+  branchId      String
+  clinicId      String
+  items         Json          // [{description, qty, unitPrice, total}]
+  subtotal      Float
+  discount      Float         @default(0)
+  tax           Float         @default(0)
+  total         Float
+  status        InvoiceStatus @default(PENDING)
+  paymentMethod String?       // CASH, CARD, UPI, INSURANCE
+  paidAt        DateTime?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 }
 
 model NotificationLog {
@@ -267,6 +298,56 @@ model AuditLog {
   action    String
   details   String?
   createdAt DateTime @default(now())
+}
+
+model ChatBotConfig {
+  id                        String   @id @default(uuid())
+  clinicId                  String   @unique
+  clinic                    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  botName                   String   @default("CureQ Assistant")
+  greeting                  String   @default("Hello! How can I help you today?")
+  systemPromptExt           String?
+  primaryColor              String   @default("#01696f")
+  language                  String   @default("auto")
+  faqPairs                  Json     @default("[]")
+  enableQueueStatus         Boolean  @default(true)
+  enableBooking             Boolean  @default(true)
+  enableTriage              Boolean  @default(true)
+  enablePrescriptionHistory Boolean  @default(false)
+  widgetPosition            String   @default("bottom-right")
+  isActive                  Boolean  @default(true)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+model ChatSession {
+  id           String        @id @default(uuid())
+  clinicId     String
+  userRole     String        @default("patient")
+  patientPhone String?
+  staffUserId  String?
+  messages     ChatMessage[]
+  metadata     Json?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([clinicId])
+  @@index([patientPhone])
+}
+
+model ChatMessage {
+  id         String      @id @default(uuid())
+  sessionId  String
+  session    ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role       String
+  content    String
+  toolCallId String?
+  toolName   String?
+  toolArgs   Json?
+  toolResult Json?
+  createdAt  DateTime    @default(now())
+
+  @@index([sessionId])
 }
 
 model WaitlistEntry {

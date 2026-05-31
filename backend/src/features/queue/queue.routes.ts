@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { PrismaClient, TokenStatus, TokenType, VisitType, SeatStatus } from '@prisma/client';
-import { queueCache } from '../services/cache.service';
-import { aiService } from '../services/ai.service';
-import { broadcastQueueUpdate, broadcastTokenCalled, broadcastTokenUpdate, broadcastDoctorBreak } from '../sockets/queue.socket';
-import { createAuditLog } from './features.routes';
+import { queueCache } from '../../shared/services/cache.service';
+import { aiService } from '../ai/ai.service';
+import { broadcastQueueUpdate, broadcastTokenCalled, broadcastTokenUpdate, broadcastDoctorBreak } from './queue.socket';
+import { createAuditLog } from '../clinic-features/clinic-features.routes';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -793,6 +793,152 @@ router.put('/:branchId/break', async (req, res) => {
     res.json({ success: true, onBreak: !!onBreak });
   } catch (err) {
     res.status(500).json({ error: 'Server error broadcasting break status.' });
+  }
+});
+
+/**
+ * @route   GET /api/queues/:branchId/public
+ * @desc    Public: Get branch + doctors info for QR self check-in (no auth)
+ */
+router.get('/:branchId/public', async (req, res) => {
+  const { branchId } = req.params;
+  try {
+    const branch = await prisma.branch.findUnique({
+      where: { id: branchId },
+      include: {
+        clinic: { select: { name: true } },
+        schedules: {
+          where: { active: true },
+          include: { doctor: { include: { user: { select: { name: true } } } } },
+        },
+      },
+    });
+
+    if (!branch) return res.status(404).json({ error: 'Branch not found' });
+
+    const today = new Date().getDay();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    // Collect unique doctors — prefer those scheduled today
+    const doctorsMap = new Map<string, { id: string; name: string; speciality: string }>();
+    branch.schedules.forEach(s => {
+      if (s.dayOfWeek === today) {
+        doctorsMap.set(s.doctorId, { id: s.doctorId, name: s.doctor.user.name, speciality: s.doctor.speciality });
+      }
+    });
+    // Fallback: include all doctors if none are scheduled today
+    if (doctorsMap.size === 0) {
+      branch.schedules.forEach(s => {
+        doctorsMap.set(s.doctorId, { id: s.doctorId, name: s.doctor.user.name, speciality: s.doctor.speciality });
+      });
+    }
+
+    const doctors = await Promise.all(
+      Array.from(doctorsMap.values()).map(async doc => {
+        const queueCount = await prisma.token.count({
+          where: { branchId, doctorId: doc.id, status: { in: ['WAITING', 'IN_CONSULTATION'] }, checkInTime: { gte: todayStart } },
+        });
+        return { ...doc, queueCount };
+      })
+    );
+
+    res.json({ name: branch.name, clinicName: branch.clinic.name, address: branch.address, doctors });
+  } catch (err) {
+    console.error('Public branch info error:', err);
+    res.status(500).json({ error: 'Failed to load clinic information' });
+  }
+});
+
+/**
+ * @route   POST /api/queues/:branchId/self-checkin
+ * @desc    Public: Patient self check-in via QR code (no auth required)
+ */
+router.post('/:branchId/self-checkin', async (req, res) => {
+  const { branchId } = req.params;
+  const { patientName, patientPhone, chiefComplaint, doctorId, visitType } = req.body;
+
+  if (!patientName || !patientPhone || !doctorId) {
+    return res.status(400).json({ error: 'Name, phone, and doctor are required' });
+  }
+
+  try {
+    const io = req.app.get('io');
+
+    const [branch, doctorProfile] = await Promise.all([
+      prisma.branch.findUnique({ where: { id: branchId }, include: { clinic: true } }),
+      prisma.doctorProfile.findUnique({ where: { id: doctorId }, include: { user: { select: { name: true } } } }),
+    ]);
+
+    if (!branch) return res.status(404).json({ error: 'Branch not found' });
+    if (!doctorProfile) return res.status(404).json({ error: 'Doctor not found' });
+
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    // SaaS plan daily limit check
+    const dailyCount = await prisma.token.count({ where: { branchId, createdAt: { gte: startOfDay } } });
+    const plan = branch.clinic.plan;
+    if (plan === 'FREE' && dailyCount >= 50) {
+      return res.status(402).json({ error: 'Daily check-in limit reached. Please register at the front desk.' });
+    }
+
+    const prefix = getSpecialityPrefix(doctorProfile.speciality);
+    const doctorCountToday = await prisma.token.count({ where: { doctorId, createdAt: { gte: startOfDay } } });
+    const queueOrder = doctorCountToday + 1;
+    const tokenNo = `${prefix}-${String(queueOrder).padStart(3, '0')}`;
+
+    const waitingCount = await prisma.token.count({ where: { branchId, doctorId, status: 'WAITING' } });
+    const eta = await aiService.getEstimatedWaitTime(branchId, doctorId, waitingCount);
+
+    const seatedCount = await prisma.token.count({ where: { branchId, status: 'WAITING', seatStatus: 'SEATED' } });
+    const seatStatus = seatedCount < branch.waitingSeats ? SeatStatus.SEATED : SeatStatus.WAITING_OUTSIDE;
+
+    const patientUser = await prisma.user.findFirst({ where: { phone: patientPhone, role: 'PATIENT' } });
+
+    const token = await prisma.token.create({
+      data: {
+        tokenNo,
+        queueOrder,
+        type: 'GENERAL',
+        visitType: (visitType as VisitType) || 'NEW',
+        status: 'WAITING',
+        chiefComplaint: chiefComplaint || null,
+        estimatedWait: eta,
+        patientPhone,
+        patientName,
+        patientId: patientUser?.id || null,
+        doctorId,
+        branchId,
+        seatStatus,
+      },
+    });
+
+    const activeTokenCached = {
+      id: token.id, tokenNo: token.tokenNo, patientName: token.patientName,
+      patientPhone: token.patientPhone, patientId: token.patientId, appointmentId: null,
+      type: token.type, visitType: token.visitType, status: token.status,
+      chiefComplaint: token.chiefComplaint, notes: token.notes, estimatedWait: token.estimatedWait,
+      checkInTime: token.checkInTime.toISOString(), startTime: null,
+      queueOrder: token.queueOrder, seatStatus: token.seatStatus,
+    };
+
+    await queueCache.addToken(branchId, doctorId, activeTokenCached);
+    if (io) {
+      const activeQueue = await queueCache.getQueue(branchId, doctorId);
+      broadcastQueueUpdate(io, branchId, doctorId, activeQueue);
+    }
+
+    const notificationMsg = seatStatus === SeatStatus.SEATED
+      ? `Self check-in successful! Token: ${tokenNo}. Dr. ${doctorProfile.user.name}. ETA: ~${eta} mins. Please take a seat.`
+      : `Self check-in successful! Token: ${tokenNo}. Dr. ${doctorProfile.user.name}. Waiting room full — you'll be called when a seat opens. ETA: ~${eta} mins.`;
+
+    await sendNotification(branchId, patientPhone, notificationMsg, 'SMS');
+
+    res.status(201).json({ token, seatStatus });
+  } catch (err) {
+    console.error('Self check-in error:', err);
+    res.status(500).json({ error: 'Check-in failed. Please ask the receptionist for help.' });
   }
 });
 

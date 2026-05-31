@@ -1,14 +1,17 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQueueStore, TokenItem } from '../../../src/store/useQueueStore';
 import { apiRequest } from '../../../src/utils/api';
 import { useClerkSync } from '../../../src/utils/useClerkSync';
 import { useUser } from '@clerk/nextjs';
 import VoiceDictation from '../../../src/components/VoiceDictation';
 import AISoapNotes from '../../../src/components/AISoapNotes';
+import AIPrescription from '../../../src/components/AIPrescription';
 import AIPatientBrief from '../../../src/components/AIPatientBrief';
 import AIFollowupMessage from '../../../src/components/AIFollowupMessage';
+import UserGuide from '../../../src/components/UserGuide';
 import { useToast } from '../../../src/components/Toast';
 import {
   Play, SkipForward, AlertCircle, Save, CheckCircle2,
@@ -23,8 +26,15 @@ const SPECIALITIES_LIST = [
 ];
 
 export default function DoctorConsole() {
-  const { syncing } = useClerkSync();
+  const { syncing, isSignedIn } = useClerkSync();
   const { user } = useUser();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!syncing && !isSignedIn) {
+      router.replace('/login');
+    }
+  }, [syncing, isSignedIn, router]);
 
   const {
     activeQueue, servedToday, fetchQueue, initSocket, disconnectSocket,
@@ -728,7 +738,7 @@ export default function DoctorConsole() {
 
   return (
     <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] flex flex-col md:flex-row relative">
-      
+      <UserGuide />
       {/* Sidebar */}
       <aside className="w-full md:w-64 bg-white border-r border-[#e9e9e7] flex flex-col h-auto md:h-screen sticky top-0 z-20">
         <div className="p-6 border-b border-[#e9e9e7] flex items-center gap-2">
@@ -744,6 +754,9 @@ export default function DoctorConsole() {
             <a href="/dashboard/reception" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c]">
               <Activity className="h-4 w-4" /> Reception
             </a>
+            <a href="/dashboard/chatbot" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#01696f]">
+              <Bell className="h-4 w-4" /> AI Chatbot
+            </a>
           </div>
         </nav>
         <div className="p-4 border-t border-[#e9e9e7]">
@@ -754,11 +767,15 @@ export default function DoctorConsole() {
             <LogOut className="h-3.5 w-3.5" /> Reset Sandbox Clinic
           </button>
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-[#e6f3f4] text-[#01696f] flex items-center justify-center font-bold">
-              {doctorName ? doctorName.charAt(0) : 'D'}
-            </div>
+            {user?.imageUrl ? (
+              <img src={user.imageUrl} alt="Avatar" className="h-10 w-10 rounded-full object-cover border border-[#e9e9e7]" />
+            ) : (
+              <div className="h-10 w-10 rounded-full bg-[#e6f3f4] text-[#01696f] flex items-center justify-center font-bold">
+                {doctorName ? doctorName.charAt(0) : 'D'}
+              </div>
+            )}
             <div>
-              <p className="text-sm font-semibold">{doctorName}</p>
+              <p className="text-sm font-semibold truncate max-w-[140px]" title={doctorName || 'Doctor'}>{doctorName}</p>
               <p className="text-xs text-[#64748b]">{speciality}</p>
             </div>
           </div>
@@ -999,6 +1016,11 @@ export default function DoctorConsole() {
                               <AISoapNotes
                                 rawNotes={consultNotes}
                                 onApply={(structured) => setConsultNotes(structured)}
+                              />
+                              <AIPrescription
+                                soapNotes={consultNotes}
+                                patientName={currentPatient.patientName}
+                                doctorName={doctorName}
                               />
                               <AIFollowupMessage
                                 consultNotes={consultNotes}

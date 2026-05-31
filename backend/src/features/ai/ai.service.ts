@@ -690,6 +690,99 @@ Rules: Use simple non-medical language. Be warm and reassuring. Include medicati
       return { hasAlert: false, patterns: [] };
     }
   }
+
+  /**
+   * Generates a structured prescription with drug interaction warnings from SOAP notes
+   */
+  async generatePrescription(
+    soapNotes: string,
+    patientInfo: { name: string; age?: number; gender?: string; allergies?: string }
+  ): Promise<{
+    medications: { name: string; dosage: string; frequency: string; duration: string; route: string; instructions: string }[];
+    interactions: string[];
+    generalAdvice: string;
+    reviewRequired: boolean;
+  }> {
+    const apiKey = process.env.OPENAI_API_KEY;
+
+    if (!apiKey) {
+      return {
+        medications: [
+          {
+            name: 'Specify medication',
+            dosage: 'As directed',
+            frequency: 'As directed',
+            duration: 'As directed',
+            route: 'Oral',
+            instructions: 'Take as prescribed by physician',
+          },
+        ],
+        interactions: [],
+        generalAdvice: 'Follow physician instructions carefully. Complete the full course of any prescribed medication.',
+        reviewRequired: true,
+      };
+    }
+
+    try {
+      const prompt = `You are a clinical pharmacology AI assistant. Based on the SOAP notes below, generate a structured prescription. Respond ONLY with JSON (no markdown).
+
+Patient Info:
+- Name: ${patientInfo.name}
+- Age: ${patientInfo.age || 'Not specified'}
+- Gender: ${patientInfo.gender || 'Not specified'}
+- Known Allergies: ${patientInfo.allergies || 'None documented'}
+
+SOAP Notes:
+${soapNotes}
+
+Return this exact JSON:
+{
+  "medications": [
+    {
+      "name": "generic drug name",
+      "dosage": "e.g. 500mg",
+      "frequency": "e.g. Twice daily (BD)",
+      "duration": "e.g. 5 days",
+      "route": "Oral/Topical/IV/IM",
+      "instructions": "e.g. Take after meals with water"
+    }
+  ],
+  "interactions": ["any drug interaction warnings as strings"],
+  "generalAdvice": "lifestyle/diet/rest advice in 1-2 sentences",
+  "reviewRequired": true or false
+}
+
+Rules:
+- Use generic drug names only
+- Base medications ONLY on what is clinically indicated in the SOAP notes
+- Flag any potential drug-drug interactions
+- Set reviewRequired to true if prescription needs physician verification
+- Maximum 6 medications`;
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+        }),
+      });
+
+      const result = await response.json();
+      const text = result.choices?.[0]?.message?.content || '{}';
+      const cleaned = text.replace(/```json|```/g, '').trim();
+      return JSON.parse(cleaned);
+    } catch (err) {
+      console.error('Prescription generation failed:', err);
+      return {
+        medications: [],
+        interactions: [],
+        generalAdvice: 'AI prescription generation failed. Please prescribe manually.',
+        reviewRequired: true,
+      };
+    }
+  }
 }
 
 export const aiService = new AIService();

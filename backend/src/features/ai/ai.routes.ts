@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { authenticateToken } from '../middleware/auth.middleware';
-import { aiService } from '../services/ai.service';
+import { authenticateToken } from '../../shared/middleware/auth.middleware';
+import { aiService } from './ai.service';
 
 const router = Router();
 
@@ -109,6 +109,24 @@ router.post('/followup-message', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('Follow-up message error:', err);
     res.status(500).json({ error: 'Follow-up message generation failed.' });
+  }
+});
+
+/**
+ * @route   POST /api/ai/generate-prescription
+ * @desc    Generate structured prescription with drug interactions from SOAP notes
+ */
+router.post('/generate-prescription', authenticateToken, async (req, res) => {
+  const { soapNotes, patientInfo } = req.body;
+  if (!soapNotes || soapNotes.trim().length < 5) {
+    return res.status(400).json({ error: 'SOAP notes must be at least 5 characters.' });
+  }
+  try {
+    const result = await aiService.generatePrescription(soapNotes.trim(), patientInfo || {});
+    res.json(result);
+  } catch (err) {
+    console.error('Prescription generation error:', err);
+    res.status(500).json({ error: 'Prescription generation failed.' });
   }
 });
 

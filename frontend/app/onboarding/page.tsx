@@ -21,7 +21,14 @@ const SPECIALITIES_LIST = [
 export default function OnboardingPage() {
   const router = useRouter();
   const { user } = useUser();
-  const { syncing } = useClerkSync();
+  const { syncing, isSignedIn } = useClerkSync();
+
+  useEffect(() => {
+    if (!syncing && !isSignedIn) {
+      router.replace('/login');
+    }
+  }, [syncing, isSignedIn, router]);
+
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

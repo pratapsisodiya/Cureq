@@ -1,17 +1,20 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQueueStore, TokenItem } from '../../../src/store/useQueueStore';
 import { apiRequest } from '../../../src/utils/api';
 import { useClerkSync } from '../../../src/utils/useClerkSync';
 import { useUser } from '@clerk/nextjs';
 import VoiceDictation from '../../../src/components/VoiceDictation';
 import AITriage from '../../../src/components/AITriage';
+import UserGuide from '../../../src/components/UserGuide';
 import { useToast } from '../../../src/components/Toast';
 import {
   Users, Activity, CheckCircle, AlertTriangle,
   Search, Printer, MoveUp, MoveDown, Mail, Bell, X, UserPlus,
-  LayoutDashboard, Settings, Plus, Trash, ArrowRight, ArrowLeft, LogOut, Calendar, Clock, Timer, Coffee
+  LayoutDashboard, Settings, Plus, Trash, ArrowRight, ArrowLeft, LogOut, Calendar, Clock, Timer, Coffee,
+  QrCode, Receipt, MessageCircle
 } from 'lucide-react';
 
 const SPECIALITIES_LIST = [
@@ -20,8 +23,15 @@ const SPECIALITIES_LIST = [
 ];
 
 export default function ReceptionDashboard() {
-  const { syncing } = useClerkSync();
+  const { syncing, isSignedIn } = useClerkSync();
   const { user } = useUser();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!syncing && !isSignedIn) {
+      router.replace('/login');
+    }
+  }, [syncing, isSignedIn, router]);
 
   const {
     activeQueue, servedToday, skippedToday, noShowToday,
@@ -83,6 +93,9 @@ export default function ReceptionDashboard() {
   const [waitlistEntries, setWaitlistEntries] = useState<any[]>([]);
   const [isLoadingWaitlist, setIsLoadingWaitlist] = useState(false);
   const [waitlistDate, setWaitlistDate] = useState(new Date().toISOString().split('T')[0]);
+
+  // QR Self Check-In modal
+  const [isQROpen, setIsQROpen] = useState(false);
 
   // Add Doctor modal
   const [isAddDoctorOpen, setIsAddDoctorOpen] = useState(false);
@@ -556,6 +569,7 @@ export default function ReceptionDashboard() {
   // === RENDER ===
   return (
     <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] flex flex-col md:flex-row relative font-sans">
+      <UserGuide />
       
       {/* Sidebar */}
       {!isOnboarding && (
@@ -577,6 +591,16 @@ export default function ReceptionDashboard() {
               <Calendar className="h-4 w-4" /> Waitlist
             </button>
             <div className="pt-2 border-t border-[#e9e9e7] mt-2">
+              <button onClick={() => setIsQROpen(true)}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#01696f] cursor-pointer">
+                <QrCode className="h-4 w-4" /> Self Check-In QR
+              </button>
+              <a href="/dashboard/billing" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#1a202c]">
+                <Receipt className="h-4 w-4" /> Billing
+              </a>
+              <a href="/dashboard/chatbot" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#01696f]">
+                <MessageCircle className="h-4 w-4" /> AI Chatbot
+              </a>
               <a href="/dashboard/analytics" className="w-full flex items-center gap-3 px-3 py-2 rounded-md font-medium text-sm transition-colors text-[#64748b] hover:bg-[#fbfbfa] hover:text-[#01696f]">
                 <Activity className="h-4 w-4" /> Analytics
               </a>
@@ -610,9 +634,17 @@ export default function ReceptionDashboard() {
               <LogOut className="h-3.5 w-3.5" /> Sign Out
             </button>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-full bg-[#e6f3f4] text-[#01696f] flex items-center justify-center font-bold">R</div>
+              {user?.imageUrl ? (
+                <img src={user.imageUrl} alt="Avatar" className="h-10 w-10 rounded-full object-cover border border-[#e9e9e7]" />
+              ) : (
+                <div className="h-10 w-10 rounded-full bg-[#e6f3f4] text-[#01696f] flex items-center justify-center font-bold">
+                  {user?.fullName ? user.fullName.charAt(0) : 'R'}
+                </div>
+              )}
               <div>
-                <p className="text-sm font-semibold">Receptionist</p>
+                <p className="text-sm font-semibold truncate max-w-[140px]" title={user?.fullName || 'Receptionist'}>
+                  {user?.fullName || 'Receptionist'}
+                </p>
                 <p className="text-xs text-[#64748b]">Front Desk</p>
               </div>
             </div>
@@ -1589,6 +1621,33 @@ export default function ReceptionDashboard() {
           </>
         )}
       </main>
+
+      {/* QR Self Check-In Modal */}
+      {isQROpen && branchId && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm border border-[#e9e9e7] p-6 text-center">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-bold text-lg flex items-center gap-2"><QrCode className="h-5 w-5 text-[#01696f]" /> Patient Self Check-In</h3>
+              <button onClick={() => setIsQROpen(false)} className="p-1.5 rounded hover:bg-[#f4f4f3] text-[#64748b]"><X className="h-4 w-4" /></button>
+            </div>
+            <p className="text-sm text-[#64748b] mb-5">Patients scan this QR code to join the queue from their phone — no receptionist needed.</p>
+            <div className="flex justify-center mb-4 p-4 bg-white border-2 border-[#e9e9e7] rounded-xl">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/checkin/${branchId}`)}`}
+                alt="Self Check-In QR"
+                className="w-48 h-48"
+              />
+            </div>
+            <p className="text-[11px] text-[#64748b] mb-1 font-mono bg-[#fbfbfa] border border-[#e9e9e7] rounded px-3 py-2 break-all select-all">
+              {typeof window !== 'undefined' ? window.location.origin : ''}/checkin/{branchId}
+            </p>
+            <p className="text-[10px] text-[#9ca3af] mt-3">Print or display this QR at the clinic entrance for contactless check-in</p>
+            <button onClick={() => window.print()} className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 border border-[#e9e9e7] rounded-lg text-sm font-semibold text-[#64748b] hover:bg-[#f4f4f3] transition-colors">
+              <Printer className="h-4 w-4" /> Print QR Code
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Hidden print area */}
       {printToken && (

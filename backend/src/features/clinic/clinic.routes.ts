@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { authenticateToken, requireRole } from '../middleware/auth.middleware';
-import { createAuditLog } from './features.routes';
+import { authenticateToken, requireRole } from '../../shared/middleware/auth.middleware';
+import { createAuditLog } from '../clinic-features/clinic-features.routes';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -239,7 +239,7 @@ router.put('/:id/branches/:branchId/seats', authenticateToken, requireRole(['CLI
 
     // Run promotion logic to fill any newly available seats
     const io = req.app.get('io');
-    const { promoteWaitingOutsidePatients } = require('./queue.routes');
+    const { promoteWaitingOutsidePatients } = require('../queue/queue.routes');
     await promoteWaitingOutsidePatients(branchId, io);
 
     res.json({ message: 'Waiting room seats updated successfully.', branch });

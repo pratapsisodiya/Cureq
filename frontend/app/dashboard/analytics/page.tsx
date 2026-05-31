@@ -11,9 +11,23 @@ import {
   LayoutDashboard, FileBarChart, ChevronLeft, Printer, Settings, Search, LogOut
 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
+import { useClerkSync } from '../../../src/utils/useClerkSync';
 import AIOutbreakAlert from '../../../src/components/AIOutbreakAlert';
+import UserGuide from '../../../src/components/UserGuide';
 
 export default function AnalyticsDashboard() {
+  const { syncing, isSignedIn } = useClerkSync();
+  const { user } = useUser();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!syncing && !isSignedIn) {
+      router.replace('/login');
+    }
+  }, [syncing, isSignedIn, router]);
+
   const [clinicId, setClinicId] = useState('');
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -114,12 +128,14 @@ export default function AnalyticsDashboard() {
     if (w) { w.document.write(html); w.document.close(); setTimeout(() => { w.focus(); w.print(); }, 300); }
   };
 
-  if (loading) {
+  if (syncing || loading) {
     return (
       <div className="min-h-screen bg-[#fbfbfa] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-[#01696f] animate-pulse">
-          <Activity className="h-10 w-10" />
-          <p className="text-sm font-semibold uppercase tracking-widest">Aggregating Clinic Data</p>
+          <Activity className="h-10 w-10 animate-spin" />
+          <p className="text-sm font-semibold uppercase tracking-widest">
+            {syncing ? 'Checking auth session...' : 'Aggregating Clinic Data'}
+          </p>
         </div>
       </div>
     );
@@ -146,7 +162,7 @@ export default function AnalyticsDashboard() {
 
   return (
     <div className="min-h-screen bg-[#fbfbfa] font-sans flex flex-col md:flex-row selection:bg-[#01696f]/20">
-
+      <UserGuide />
       {/* Sidebar */}
       <aside className="w-full md:w-64 bg-white border-r border-[#e9e9e7] flex flex-col h-auto md:h-screen sticky top-0 z-20 shadow-xs shrink-0">
         <div className="p-6 border-b border-[#e9e9e7] flex items-center gap-2">
@@ -204,9 +220,17 @@ export default function AnalyticsDashboard() {
             <LogOut className="h-3.5 w-3.5" /> Sign Out
           </button>
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-[#e6f3f4] text-[#01696f] flex items-center justify-center font-bold">R</div>
+            {user?.imageUrl ? (
+              <img src={user.imageUrl} alt="Avatar" className="h-10 w-10 rounded-full object-cover border border-[#e9e9e7]" />
+            ) : (
+              <div className="h-10 w-10 rounded-full bg-[#e6f3f4] text-[#01696f] flex items-center justify-center font-bold">
+                {user?.fullName ? user.fullName.charAt(0) : 'R'}
+              </div>
+            )}
             <div>
-              <p className="text-sm font-semibold">Receptionist</p>
+              <p className="text-sm font-semibold truncate max-w-[140px]" title={user?.fullName || 'Receptionist'}>
+                {user?.fullName || 'Receptionist'}
+              </p>
               <p className="text-xs text-[#64748b]">Front Desk</p>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import { Server, Socket } from 'socket.io';
-import { queueCache } from '../services/cache.service';
+import { queueCache } from '../../shared/services/cache.service';
 
 export function setupQueueSockets(io: Server) {
   io.on('connection', (socket: Socket) => {

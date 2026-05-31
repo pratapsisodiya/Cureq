@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { authenticateToken } from '../middleware/auth.middleware';
-import { aiService } from '../services/ai.service';
+import { authenticateToken } from '../../shared/middleware/auth.middleware';
+import { aiService } from '../ai/ai.service';
 
 const router = Router();
 const prisma = new PrismaClient();

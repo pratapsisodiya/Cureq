@@ -1,9 +1,37 @@
 'use client';
 
+import React, { useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useClerkSync } from '../src/utils/useClerkSync';
 import { ShieldCheck, Activity, Users, Tv, Smartphone, Cpu, ArrowRight } from 'lucide-react';
 
 export default function LandingPage() {
+  const { syncing, isSignedIn } = useClerkSync();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!syncing && isSignedIn) {
+      const clinicId = localStorage.getItem('cureq_clinic_id');
+      const branchId = localStorage.getItem('cureq_branch_id');
+      if (clinicId && branchId) {
+        router.replace('/dashboard');
+      } else {
+        router.replace('/onboarding');
+      }
+    }
+  }, [syncing, isSignedIn, router]);
+
+  if (syncing || isSignedIn) {
+    return (
+      <div className="min-h-screen bg-[#fbfbfa] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4 text-[#01696f] animate-pulse">
+          <Activity className="h-10 w-10 animate-spin" />
+          <p className="text-sm font-semibold uppercase tracking-widest">Checking auth session...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#fbfbfa] text-[#1a202c] selection:bg-[#01696f]/20 selection:text-[#01696f]">

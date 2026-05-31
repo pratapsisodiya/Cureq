@@ -5,18 +5,20 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 
 // Route Imports
-import authRoutes from './routes/auth.routes';
-import clinicRoutes from './routes/clinic.routes';
-import queueRoutes from './routes/queue.routes';
-import appointmentRoutes from './routes/appointment.routes';
-import patientRoutes from './routes/patient.routes';
-import analyticsRoutes from './routes/analytics.routes';
-import notificationRoutes from './routes/notification.routes';
-import featuresRouter from './routes/features.routes';
-import aiRouter from './routes/ai.routes';
+import authRoutes from './features/auth/auth.routes';
+import clinicRoutes from './features/clinic/clinic.routes';
+import queueRoutes from './features/queue/queue.routes';
+import appointmentRoutes from './features/appointment/appointment.routes';
+import patientRoutes from './features/patient/patient.routes';
+import analyticsRoutes from './features/analytics/analytics.routes';
+import notificationRoutes from './features/notification/notification.routes';
+import featuresRouter from './features/clinic-features/clinic-features.routes';
+import aiRouter from './features/ai/ai.routes';
+import billingRouter from './features/billing/billing.routes';
+import chatbotRouter from './features/chatbot/chatbot.routes';
 
 // Socket setup
-import { setupQueueSockets } from './sockets/queue.socket';
+import { setupQueueSockets } from './features/queue/queue.socket';
 
 dotenv.config();
 
@@ -54,6 +56,8 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/features', featuresRouter);
 app.use('/api/ai', aiRouter);
+app.use('/api/billing', billingRouter);
+app.use('/api/chatbot', chatbotRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
