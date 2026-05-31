@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { ClerkProvider } from '@clerk/nextjs';
+import QueryProvider from '../src/providers/QueryProvider';
 import PWAInstaller from '../src/components/PWAInstaller';
 import ChatWidget from '../src/components/ChatWidget';
 import "./globals.css";
@@ -54,22 +55,24 @@ export default function RootLayout({
 }>) {
   return (
     <ClerkProvider>
-      <html lang="en" className="h-full antialiased">
-        <head>
-          <meta name="apple-mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-          <meta name="apple-mobile-web-app-title" content="CureQ" />
-          <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
-          <link rel="apple-touch-startup-image" href="/icons/icon-512.svg" />
-          <meta name="msapplication-TileImage" content="/icons/icon-192.svg" />
-          <meta name="msapplication-TileColor" content="#01696f" />
-        </head>
-        <body className="min-h-full flex flex-col">
-          {children}
-          <PWAInstaller />
-          <ChatWidget />
-        </body>
-      </html>
+      <QueryProvider>
+        <html lang="en" className="h-full antialiased">
+          <head>
+            <meta name="apple-mobile-web-app-capable" content="yes" />
+            <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+            <meta name="apple-mobile-web-app-title" content="CureQ" />
+            <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
+            <link rel="apple-touch-startup-image" href="/icons/icon-512.svg" />
+            <meta name="msapplication-TileImage" content="/icons/icon-192.svg" />
+            <meta name="msapplication-TileColor" content="#01696f" />
+          </head>
+          <body className="min-h-full flex flex-col">
+            {children}
+            <PWAInstaller />
+            <ChatWidget />
+          </body>
+        </html>
+      </QueryProvider>
     </ClerkProvider>
   );
 }

@@ -406,10 +406,20 @@ function heuristicFallback(message: string, config: any): string {
   const lower = message.toLowerCase();
   const faq = Array.isArray(config.faqPairs) ? config.faqPairs : [];
 
-  // Check FAQ matches
+  // Check FAQ matches (with word boundary protection for short keywords)
   for (const pair of faq) {
-    if (pair.question && lower.includes(pair.question.toLowerCase().slice(0, 15))) {
-      return pair.answer;
+    if (pair.question) {
+      const q = pair.question.toLowerCase().trim();
+      const slice = q.slice(0, 15);
+      if (lower.includes(slice)) {
+        // If the matching term is very short (e.g. "fee"), ensure it's not matched inside another word (e.g. "coffee")
+        if (slice.length < 5) {
+          const regex = new RegExp(`\\b${slice}\\b`, 'i');
+          if (regex.test(lower)) return pair.answer;
+        } else {
+          return pair.answer;
+        }
+      }
     }
   }
 
@@ -503,7 +513,12 @@ export async function runChatbotTurn(params: {
 
         for (const toolCall of assistantMsg.tool_calls) {
           const toolName = toolCall.function.name;
-          const toolArgs = JSON.parse(toolCall.function.arguments || '{}');
+          let toolArgs = {};
+          try {
+            toolArgs = JSON.parse(toolCall.function.arguments || '{}');
+          } catch (e) {
+            console.error('Failed to parse tool arguments from LLM response:', e, toolCall.function.arguments);
+          }
           toolsUsed.push(toolName);
 
           let toolResult: any;

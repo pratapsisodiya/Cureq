@@ -1007,7 +1007,7 @@ export default function DoctorConsole() {
                               </div>
                             )}
                             <textarea
-                              value={consultNotes}
+                              value={consultNotes || ''}
                               onChange={(e) => setConsultNotes(e.target.value)}
                               placeholder="Type or dictate patient observations, diagnosis, and prescribed medications here..."
                               className="w-full h-40 p-4 border border-[#e9e9e7] rounded-md focus:outline-none focus:border-[#01696f] resize-none text-sm leading-relaxed shadow-inner"

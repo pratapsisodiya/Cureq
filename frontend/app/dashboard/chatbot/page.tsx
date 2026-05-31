@@ -74,6 +74,9 @@ export default function ChatbotConfigurator() {
   const [newFAQ, setNewFAQ] = useState({ question: '', answer: '' });
   const [showFAQForm, setShowFAQForm] = useState(false);
 
+  // Share & embed panel
+  const [showShare, setShowShare] = useState(true);
+
   // Chat history
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -314,48 +317,6 @@ export default function ChatbotConfigurator() {
             {/* Left — Editor */}
             <div className="lg:col-span-2 space-y-5">
 
-              {/* Share & Embed */}
-              <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 shadow-xs">
-                <h2 className="font-bold text-[#1a202c] mb-2 flex items-center gap-2">
-                  <Share2 className="h-4 w-4 text-[#01696f]" /> Share & Embed Chatbot
-                </h2>
-                <p className="text-[11px] text-[#64748b] mb-4">
-                  Make your CureQ AI Chatbot accessible to patients by sharing a direct link or embedding it on your own clinic website.
-                </p>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-[#64748b] mb-1">Direct Share Link</label>
-                    <div className="flex gap-2">
-                      <input readOnly value={typeof window !== 'undefined' ? `${window.location.origin}/patient/portal?clinicId=${clinicId}` : ''}
-                        className="flex-1 px-3 py-2 border border-[#e9e9e7] bg-[#fbfbfa] rounded-lg text-xs font-mono focus:outline-none" />
-                      <button onClick={() => {
-                        if (typeof window !== 'undefined') {
-                          navigator.clipboard.writeText(`${window.location.origin}/patient/portal?clinicId=${clinicId}`);
-                          showToast('Direct link copied to clipboard!', 'success');
-                        }
-                      }} className="flex items-center gap-1.5 px-3 py-2 bg-[#f4f4f3] hover:bg-[#e9e9e7] text-[#1a202c] border border-[#e9e9e7] rounded-lg text-xs font-semibold transition-colors">
-                        <Copy className="h-3.5 w-3.5" /> Copy
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-[#64748b] mb-1">Embed on Clinic Website (iframe)</label>
-                    <div className="flex gap-2">
-                      <input readOnly value={typeof window !== 'undefined' ? `<iframe src="${window.location.origin}/patient/portal?clinicId=${clinicId}" style="border:none; width:400px; height:600px; position:fixed; bottom:20px; right:20px; z-index:99999;" allow="clipboard-write"></iframe>` : ''}
-                        className="flex-1 px-3 py-2 border border-[#e9e9e7] bg-[#fbfbfa] rounded-lg text-xs font-mono focus:outline-none" />
-                      <button onClick={() => {
-                        if (typeof window !== 'undefined') {
-                          navigator.clipboard.writeText(`<iframe src="${window.location.origin}/patient/portal?clinicId=${clinicId}" style="border:none; width:400px; height:600px; position:fixed; bottom:20px; right:20px; z-index:99999;" allow="clipboard-write"></iframe>`);
-                          showToast('Embed iframe snippet copied to clipboard!', 'success');
-                        }
-                      }} className="flex items-center gap-1.5 px-3 py-2 bg-[#f4f4f3] hover:bg-[#e9e9e7] text-[#1a202c] border border-[#e9e9e7] rounded-lg text-xs font-semibold transition-colors">
-                        <Code className="h-3.5 w-3.5" /> Copy
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
               {/* Branding */}
               <div className="bg-white border border-[#e9e9e7] rounded-xl p-5 shadow-xs">
                 <h2 className="font-bold text-[#1a202c] mb-4 flex items-center gap-2"><Bot className="h-4 w-4 text-[#01696f]" /> Branding & Identity</h2>
@@ -467,8 +428,69 @@ export default function ChatbotConfigurator() {
               </div>
             </div>
 
-            {/* Right — Live Preview */}
+            {/* Right — Share + Live Preview */}
             <div className="space-y-4">
+
+              {/* Share & Embed — collapsible, at top of right column */}
+              <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden">
+                <button
+                  onClick={() => setShowShare(v => !v)}
+                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-[#fbfbfa] transition-colors group"
+                >
+                  <div className="flex items-center gap-2">
+                    <Share2 className="h-4 w-4 text-[#01696f]" />
+                    <span className="text-sm font-bold text-[#1a202c]">Share & Embed Chatbot</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#e6f3f4] text-[#01696f] font-semibold">Ready to share</span>
+                  </div>
+                  <ChevronDown className={`h-4 w-4 text-[#64748b] transition-transform duration-200 ${showShare ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showShare && (
+                  <div className="px-4 pb-4 pt-1 border-t border-[#e9e9e7] space-y-3">
+                    <p className="text-[11px] text-[#64748b] pt-2">
+                      Share this link with patients or embed the chatbot on your clinic website — no login needed.
+                    </p>
+
+                    {/* Direct link */}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-[#64748b] mb-1.5">Patient Chat Link</label>
+                      <div className="flex gap-1.5">
+                        <input
+                          readOnly
+                          value={typeof window !== 'undefined' ? `${window.location.origin}/chat/${clinicId}` : ''}
+                          className="flex-1 px-2.5 py-1.5 border border-[#e9e9e7] bg-[#fbfbfa] rounded-lg text-[11px] font-mono focus:outline-none min-w-0"
+                        />
+                        <button
+                          onClick={() => { if (typeof window !== 'undefined') window.open(`${window.location.origin}/chat/${clinicId}`, '_blank'); }}
+                          className="shrink-0 px-2.5 py-1.5 bg-[#01696f] text-white rounded-lg text-[11px] font-semibold hover:bg-[#015a5f] transition-colors"
+                        >Open</button>
+                        <button
+                          onClick={() => { if (typeof window !== 'undefined') { navigator.clipboard.writeText(`${window.location.origin}/chat/${clinicId}`); showToast('Link copied!', 'success'); } }}
+                          className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 bg-[#f4f4f3] hover:bg-[#e9e9e7] border border-[#e9e9e7] rounded-lg text-[11px] font-semibold transition-colors"
+                        ><Copy className="h-3 w-3" /> Copy</button>
+                      </div>
+                    </div>
+
+                    {/* Embed snippet */}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-[#64748b] mb-1.5">Website Embed (iframe)</label>
+                      <div className="flex gap-1.5">
+                        <input
+                          readOnly
+                          value={typeof window !== 'undefined' ? `<iframe src="${window.location.origin}/chat/${clinicId}" style="border:none;position:fixed;bottom:0;right:0;width:420px;height:680px;z-index:99999;border-radius:16px;" title="AI Health Assistant"></iframe>` : ''}
+                          className="flex-1 px-2.5 py-1.5 border border-[#e9e9e7] bg-[#fbfbfa] rounded-lg text-[11px] font-mono focus:outline-none min-w-0"
+                        />
+                        <button
+                          onClick={() => { if (typeof window !== 'undefined') { navigator.clipboard.writeText(`<iframe src="${window.location.origin}/chat/${clinicId}" style="border:none;position:fixed;bottom:0;right:0;width:420px;height:680px;z-index:99999;border-radius:16px;" title="AI Health Assistant"></iframe>`); showToast('Embed snippet copied!', 'success'); } }}
+                          className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 bg-[#f4f4f3] hover:bg-[#e9e9e7] border border-[#e9e9e7] rounded-lg text-[11px] font-semibold transition-colors"
+                        ><Code className="h-3 w-3" /> Copy</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Live Preview */}
               <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden sticky top-24">
                 <div className="px-4 py-3 border-b border-[#e9e9e7]">
                   <p className="text-sm font-bold text-[#1a202c]">Live Preview</p>
