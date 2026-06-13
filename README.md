@@ -13,8 +13,8 @@
 ## 📸 Core Modules
 
 <div align="center">
-  <img src="https://via.placeholder.com/800x450.png?text=CureQ+Clinic+Operations+Hub" alt="CureQ Operations Hub" width="800">
-  <p><em>CureQ Command Center - Real-time Queue Tracking & AI Analytics</em></p>
+  <img src="./cureq_dashboard_preview.png" alt="CureQ Operations Hub" width="800">
+  <p><em>CureQ Command Center - Real-time Queue Tracking, AI Triage & Delay Buffers</em></p>
 </div>
 
 ---

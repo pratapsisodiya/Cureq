@@ -43,6 +43,7 @@ interface QueueState {
   servedToday: TokenItem[];
   skippedToday: TokenItem[];
   noShowToday: TokenItem[];
+  lastDoctorId: string;
 
   socket: Socket | null;
   isConnected: boolean;
@@ -91,6 +92,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   servedToday: [],
   skippedToday: [],
   noShowToday: [],
+  lastDoctorId: '',
   socket: null,
   isConnected: false,
   lastCalledToken: null,
@@ -102,6 +104,7 @@ export const useQueueStore = create<QueueState>((set, get) => ({
   clearError: () => set({ error: null }),
 
   fetchQueue: async (branchId, doctorId) => {
+    if (doctorId) set({ lastDoctorId: doctorId });
     set(setLoading('queue', true));
     set({ error: null });
     try {
@@ -145,9 +148,15 @@ export const useQueueStore = create<QueueState>((set, get) => ({
       set({ isConnected: false });
     });
 
-    // Rejoin the branch room on every reconnect so state stays current
+    // Rejoin the branch room on every reconnect and re-sync missed queue changes
     newSocket.on('reconnect', () => {
       newSocket.emit('join:branch', branchId);
+      const lastDoctorId = get().lastDoctorId;
+      if (lastDoctorId) get().fetchQueue(branchId, lastDoctorId);
+    });
+
+    newSocket.on('connect_error', () => {
+      set({ isConnected: false });
     });
 
     newSocket.on('queue:updated', (data: { doctorId: string; queue: TokenItem[] }) => {

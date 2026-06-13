@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Brain, AlertTriangle, Pill, Stethoscope, ChevronDown, ChevronUp, Loader2, History } from 'lucide-react';
+import axios from 'axios';
 import { apiRequest } from '../utils/api';
 
 interface PatientBrief {
@@ -30,13 +31,18 @@ export default function AIPatientBrief({ patientPhone, clinicId, patientName }: 
     setLoading(true);
     setCollapsed(false);
 
+    const controller = new AbortController();
+
     apiRequest('/ai/patient-context', {
       method: 'POST',
       body: JSON.stringify({ patientPhone, clinicId }),
+      signal: controller.signal,
     })
       .then(data => setBrief(data))
-      .catch(() => setBrief(null))
+      .catch((err: any) => { if (!axios.isCancel(err)) setBrief(null); })
       .finally(() => setLoading(false));
+
+    return () => controller.abort();
   }, [patientPhone, clinicId]);
 
   if (loading) {

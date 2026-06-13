@@ -98,11 +98,18 @@ export class AIService {
 
       const adjustedConsultTime = avgConsultTime * speedFactor;
 
+      // Fetch doctor's manual delay buffer
+      const doctor = await prisma.doctorProfile.findUnique({
+        where: { id: doctorId },
+        select: { delayBuffer: true }
+      });
+      const delayBuffer = doctor?.delayBuffer || 0;
+
       // 3. Calculate final estimate
-      const estimatedWait = Math.round(adjustedConsultTime * patientsAhead + BUFFER_TIME);
+      const estimatedWait = Math.round(adjustedConsultTime * patientsAhead + BUFFER_TIME + delayBuffer);
       
-      // Return at least 5 minutes if there is someone ahead
-      return patientsAhead > 0 ? Math.max(5, estimatedWait) : 0;
+      // Return at least 5 minutes if there is someone ahead (or if there's a delay buffer active)
+      return (patientsAhead > 0 || delayBuffer > 0) ? Math.max(5, estimatedWait) : 0;
     } catch (err) {
       console.error('Error calculating AI wait time, using baseline heuristic:', err);
       return patientsAhead > 0 ? (DEFAULT_CONSULT_TIME * patientsAhead + BUFFER_TIME) : 0;

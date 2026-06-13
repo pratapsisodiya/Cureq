@@ -36,6 +36,7 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
   const [availableSlots, setAvailableSlots] = useState<{ time: string; available: boolean }[]>([]);
   const [selectedSlot, setSelectedSlot] = useState('');
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
+  const [slotError, setSlotError] = useState('');
   const [visitType, setVisitType] = useState<'NEW' | 'FOLLOW_UP'>('NEW');
   const [bookingSuccess, setBookingSuccess] = useState<any>(null);
 
@@ -78,10 +79,13 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
       setIsLoadingSlots(true);
       setAvailableSlots([]);
       setSelectedSlot('');
+      setSlotError('');
       try {
         const res = await apiRequest(`/appointments/slots?doctorId=${selectedDoctorId}&branchId=${branch.id}&date=${selectedDate}`);
         setAvailableSlots(res.slots || []);
-      } catch { /* ignore */ } finally {
+      } catch {
+        setSlotError('Could not load available slots. Please try again.');
+      } finally {
         setIsLoadingSlots(false);
       }
       try {
@@ -97,7 +101,7 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
 
   const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedDoctorId || !patientName || !patientPhone) {
+    if (!selectedDoctorId || !patientName || !patientPhone || !branch) {
       setError('Please fill in all required fields.');
       return;
     }
@@ -141,7 +145,7 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
 
   const handleAppointmentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedDoctorId || !patientName || !patientPhone || !selectedDate || !selectedSlot) {
+    if (!selectedDoctorId || !patientName || !patientPhone || !selectedDate || !selectedSlot || !branch) {
       setError('Please fill in all fields and select a time slot.');
       return;
     }
@@ -428,6 +432,8 @@ export default function PatientBookingPortal({ params }: { params: Promise<Booki
                         <label className="block text-xs font-bold text-[#64748b] uppercase tracking-wider mb-2">Available Time Slots *</label>
                         {isLoadingSlots ? (
                           <p className="text-xs text-[#64748b]">Loading slots...</p>
+                        ) : slotError ? (
+                          <p className="text-xs text-red-500">{slotError}</p>
                         ) : availableSlots.length === 0 ? (
                           <p className="text-xs text-red-500">No slots available for this date. Try another day.</p>
                         ) : (

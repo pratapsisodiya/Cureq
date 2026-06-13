@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { Role } from '@prisma/client';
+import { Permission, hasPermission } from '../config/permissions';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -27,7 +28,10 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
   }
 
   try {
-    const secret = process.env.JWT_SECRET || 'cureq_super_secret_jwt_key_123!';
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      return res.status(500).json({ error: 'Server configuration error.' });
+    }
     const decoded = jwt.verify(token, secret) as any;
     req.user = decoded;
     next();
@@ -45,6 +49,20 @@ export const requireRole = (roles: Role[]) => {
     
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Access denied. Insufficient privileges.' });
+    }
+    
+    next();
+  };
+};
+
+export const requirePermission = (permission: Permission) => {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    
+    if (!hasPermission(req.user.role, permission)) {
+      return res.status(403).json({ error: 'Access denied. Missing required permission.' });
     }
     
     next();

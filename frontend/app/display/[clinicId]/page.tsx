@@ -21,12 +21,13 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
   
   // Announcement ticker
   const [tickerIndex, setTickerIndex] = useState(0);
-  const announcements = [
+  const DEFAULT_ANNOUNCEMENTS = [
     'Welcome to CureQ Smart Waiting Rooms. Your estimated wait times are calculated dynamically.',
     'Please maintain social distancing and wear a mask if you have cough or cold symptoms.',
     'For fast check-in, scan the QR code at the reception desk to track your status on your phone.',
-    'Follow us on WhatsApp for follow-up reminders and digital consultation slips.'
+    'Follow us on WhatsApp for follow-up reminders and digital consultation slips.',
   ];
+  const [announcements, setAnnouncements] = useState(DEFAULT_ANNOUNCEMENTS);
 
   // Visual called chime overlay
   const [calledAlert, setCalledAlert] = useState<{ tokenNo: string; doctorName: string } | null>(null);
@@ -55,7 +56,25 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
             activeList.push(...(queueData.active || []));
           }
           setActiveQueue(activeList);
+
+          // Fetch custom announcements (fall back to defaults if none set)
+          let activeAnnouncements = [...DEFAULT_ANNOUNCEMENTS];
+          try {
+            const annRes = await apiRequest(`/notifications/${firstBranch.id}/announcements`);
+            if (annRes.announcements && annRes.announcements.length > 0) {
+              activeAnnouncements = annRes.announcements;
+            }
+          } catch { /* use defaults */ }
+
+          // Prepends active doctor delay messages
+          for (const sched of firstBranch.schedules) {
+            if (sched.doctor.delayBuffer > 0) {
+              activeAnnouncements.unshift(`Notice: Dr. ${sched.doctor.user?.name || 'Doctor'} is running approximately ${sched.doctor.delayBuffer} minutes behind schedule.`);
+            }
+          }
+          setAnnouncements(activeAnnouncements);
         }
+
         setLoading(false);
       } catch (err) {
         console.error(err);
@@ -77,17 +96,37 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
 
     // When anyone updates in this branch, rebuild the active lists
     socket.on('queue:updated', async () => {
-      if (!clinicData) return;
+      if (!branchId) return;
       try {
+        const res = await apiRequest(`/clinics/${clinicId}`);
+        const branch = res.clinic?.branches?.[0];
+        if (!branch) return;
         const seenDoctors = new Set<string>();
         const activeList: any[] = [];
-        for (const sched of clinicData.branches[0].schedules) {
+        for (const sched of branch.schedules) {
           if (seenDoctors.has(sched.doctor.id)) continue;
           seenDoctors.add(sched.doctor.id);
           const queueData = await apiRequest(`/queues/${branchId}/live?doctorId=${sched.doctor.id}`);
           activeList.push(...(queueData.active || []));
         }
         setActiveQueue(activeList);
+
+        // Fetch custom announcements
+        let activeAnnouncements = [...DEFAULT_ANNOUNCEMENTS];
+        try {
+          const annRes = await apiRequest(`/notifications/${branchId}/announcements`);
+          if (annRes.announcements && annRes.announcements.length > 0) {
+            activeAnnouncements = annRes.announcements;
+          }
+        } catch { /* use defaults */ }
+
+        // Prepends active doctor delay messages
+        for (const sched of branch.schedules) {
+          if (sched.doctor.delayBuffer > 0) {
+            activeAnnouncements.unshift(`Notice: Dr. ${sched.doctor.user?.name || 'Doctor'} is running approximately ${sched.doctor.delayBuffer} minutes behind schedule.`);
+          }
+        }
+        setAnnouncements(activeAnnouncements);
       } catch (err) {
         console.error(err);
       }
@@ -147,7 +186,7 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
       setTickerIndex(prev => (prev + 1) % announcements.length);
     }, 8000);
     return () => clearInterval(timer);
-  }, []);
+  }, [announcements]);
 
   // Live clock
   useEffect(() => {
@@ -189,7 +228,7 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
               {clinicData?.name || 'CureQ Waiting Room'}
             </h1>
             <span className="text-xs text-slate-400 font-medium tracking-wide uppercase">
-              {clinicData?.branches[0]?.name || 'Main Chamber'}
+              {clinicData?.branches?.[0]?.name || 'Main Chamber'}
             </span>
           </div>
         </div>
@@ -234,7 +273,7 @@ export default function TVDisplayScreen({ params }: { params: Promise<DisplayPar
                     <div>
                       <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider block">Chamber Doctor</span>
                       <span className="text-lg font-bold text-slate-300 block mt-1">
-                        {clinicData?.branches[0]?.schedules.find((s: any) => s.doctor.id === token.doctorId)?.doctor.user.name || 'Doctor'}
+                        {clinicData?.branches?.[0]?.schedules?.find((s: any) => s.doctor.id === token.doctorId)?.doctor.user.name || 'Doctor'}
                       </span>
                     </div>
 

@@ -168,6 +168,94 @@ router.get('/:clinicId', authenticateToken, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/analytics/:clinicId/doctor-insights
+ * @desc    Per-doctor satisfaction scores from VisitLog ratings (last 30 days)
+ */
+router.get('/:clinicId/doctor-insights', authenticateToken, async (req, res) => {
+  const { clinicId } = req.params;
+  try {
+    const doctors = await prisma.doctorProfile.findMany({
+      where: { schedules: { some: { branch: { clinicId } } } },
+      include: { user: { select: { name: true } } },
+    });
+
+    if (!doctors.length) return res.json({ insights: [] });
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const logs = await prisma.visitLog.findMany({
+      where: {
+        doctorName: { in: doctors.map(d => d.user.name) },
+        rating: { not: null },
+        date: { gte: thirtyDaysAgo },
+      },
+      select: { doctorName: true, rating: true },
+    });
+
+    const ratingMap = new Map(doctors.map(d => [d.user.name, { name: d.user.name, speciality: d.speciality, ratings: [] as number[] }]));
+    logs.forEach(l => {
+      const entry = ratingMap.get(l.doctorName);
+      if (entry && l.rating) entry.ratings.push(l.rating);
+    });
+
+    const insights = Array.from(ratingMap.values())
+      .filter(d => d.ratings.length > 0)
+      .map(d => ({
+        name: d.name,
+        speciality: d.speciality,
+        avgRating: parseFloat((d.ratings.reduce((a, b) => a + b, 0) / d.ratings.length).toFixed(1)),
+        ratingCount: d.ratings.length,
+      }))
+      .sort((a, b) => b.avgRating - a.avgRating);
+
+    res.json({ insights });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch doctor insights.' });
+  }
+});
+
+/**
+ * @route   GET /api/analytics/:clinicId/today-appointments
+ * @desc    Today's appointment schedule summary
+ */
+router.get('/:clinicId/today-appointments', authenticateToken, async (req, res) => {
+  const { clinicId } = req.params;
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const appointments = await prisma.appointment.findMany({
+      where: { branch: { clinicId }, date: today },
+      include: {
+        doctor: { include: { user: { select: { name: true } } } },
+        patient: { select: { name: true } },
+      },
+      orderBy: { timeSlot: 'asc' },
+    });
+
+    res.json({
+      total: appointments.length,
+      checkedIn: appointments.filter(a => a.status === 'CHECKED_IN').length,
+      pending: appointments.filter(a => a.status === 'BOOKED').length,
+      cancelled: appointments.filter(a => a.status === 'CANCELLED').length,
+      upcoming: appointments
+        .filter(a => a.status === 'BOOKED')
+        .slice(0, 6)
+        .map(a => ({
+          id: a.id,
+          timeSlot: a.timeSlot,
+          patientName: a.patient.name,
+          doctorName: a.doctor.user.name,
+          type: a.type,
+        })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch today appointments.' });
+  }
+});
+
+/**
  * @route   POST /api/analytics/:clinicId/query
  * @desc    Gemini NLP analytical questions on clinic efficiency
  */

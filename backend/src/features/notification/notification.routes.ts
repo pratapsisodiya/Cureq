@@ -80,4 +80,45 @@ router.post('/broadcast', authenticateToken, requireRole(['CLINIC_ADMIN', 'DOCTO
   }
 });
 
+/**
+ * @route   GET /api/notifications/:branchId/announcements
+ * @desc    Fetch custom TV ticker announcements for a branch
+ */
+router.get('/:branchId/announcements', async (req, res) => {
+  try {
+    const branch = await prisma.branch.findUnique({
+      where: { id: req.params.branchId },
+      select: { announcements: true },
+    });
+    if (!branch) return res.status(404).json({ error: 'Branch not found.' });
+    const announcements = (branch.announcements as string[] | null) || [];
+    res.json({ announcements });
+  } catch (err) {
+    console.error('Fetch announcements error:', err);
+    res.status(500).json({ error: 'Server error fetching announcements.' });
+  }
+});
+
+/**
+ * @route   POST /api/notifications/:branchId/announcements
+ * @desc    Save custom TV ticker announcements for a branch
+ */
+router.post('/:branchId/announcements', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+  const { messages } = req.body;
+  if (!Array.isArray(messages)) {
+    return res.status(400).json({ error: 'messages must be an array of strings.' });
+  }
+  const cleaned = messages.map((m: any) => String(m).trim()).filter(Boolean).slice(0, 10);
+  try {
+    const branch = await prisma.branch.update({
+      where: { id: req.params.branchId },
+      data: { announcements: cleaned },
+    });
+    res.json({ message: 'Announcements updated.', announcements: branch.announcements });
+  } catch (err) {
+    console.error('Save announcements error:', err);
+    res.status(500).json({ error: 'Server error saving announcements.' });
+  }
+});
+
 export default router;

@@ -25,6 +25,20 @@ const SPECIALITIES_LIST = [
   'Ophthalmologist', 'Gynecologist', 'Orthopedic Surgeon', 'Pediatrician'
 ];
 
+function getComplaintCategory(complaint: string | null): { label: string; cls: string } | null {
+  if (!complaint) return null;
+  const s = complaint.toLowerCase();
+  if (/fever|cough|cold|flu|respiratory|throat|breath|wheez|sore throat/.test(s)) return { label: 'Respiratory', cls: 'bg-sky-50 text-sky-700 border-sky-200' };
+  if (/follow.?up|checkup|check-up|review|routine|revisit/.test(s)) return { label: 'Follow-up', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+  if (/pain|ache|hurt|injury|fracture|sprain|swelling/.test(s)) return { label: 'Pain', cls: 'bg-red-50 text-red-700 border-red-200' };
+  if (/diabetes|sugar|insulin|hba1c/.test(s)) return { label: 'Diabetes', cls: 'bg-purple-50 text-purple-700 border-purple-200' };
+  if (/blood pressure|hypertension|bp |cardiac|chest pain|heart/.test(s)) return { label: 'Cardiac', cls: 'bg-pink-50 text-pink-700 border-pink-200' };
+  if (/skin|rash|itch|acne|allerg|eczema|dermat/.test(s)) return { label: 'Skin', cls: 'bg-orange-50 text-orange-700 border-orange-200' };
+  if (/stomach|gastric|nausea|vomit|diarrhea|digest|bowel|abdom/.test(s)) return { label: 'Gastro', cls: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (/headache|migraine|neuro|dizzy|vertigo|seizure/.test(s)) return { label: 'Neuro', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' };
+  return null;
+}
+
 export default function DoctorConsole() {
   const { syncing, isSignedIn } = useClerkSync();
   const { user } = useUser();
@@ -37,8 +51,8 @@ export default function DoctorConsole() {
   }, [syncing, isSignedIn, router]);
 
   const {
-    activeQueue, servedToday, fetchQueue, initSocket, disconnectSocket,
-    callNext, skipToken, markNoShow
+    activeQueue, servedToday, noShowToday, skippedToday, fetchQueue, initSocket, disconnectSocket,
+    callNext, skipToken, markNoShow, isConnected, doctorBreakStatus
   } = useQueueStore();
 
   const { showToast, ToastComponent } = useToast();
@@ -88,6 +102,8 @@ export default function DoctorConsole() {
   // Break mode
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [breakEndTime, setBreakEndTime] = useState('');
+  const [breakDuration, setBreakDuration] = useState(15);
+  const [showBreakPicker, setShowBreakPicker] = useState(false);
 
   // Availability toggle
   const [isUnavailableToday, setIsUnavailableToday] = useState(false);
@@ -286,30 +302,33 @@ export default function DoctorConsole() {
     }
   };
 
-  const handleToggleBreak = async () => {
-    if (!isOnBreak) {
-      const resume = new Date(Date.now() + 15 * 60 * 1000);
-      const resumeStr = resume.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-      setBreakEndTime(resumeStr);
-      setIsOnBreak(true);
-      showToast('Break mode on. Queue paused. Resuming at ' + resumeStr, 'success');
-      try {
-        await apiRequest(`/queues/${branchId}/break`, {
-          method: 'PUT',
-          body: JSON.stringify({ doctorId, doctorName, onBreak: true, resumeAt: resumeStr }),
-        });
-      } catch { /* non-critical */ }
-    } else {
-      setIsOnBreak(false);
-      setBreakEndTime('');
-      showToast('Break ended. You are back online.', 'success');
-      try {
-        await apiRequest(`/queues/${branchId}/break`, {
-          method: 'PUT',
-          body: JSON.stringify({ doctorId, doctorName, onBreak: false, resumeAt: null }),
-        });
-      } catch { /* non-critical */ }
-    }
+  const handleStartBreak = async (durationMins: number) => {
+    setShowBreakPicker(false);
+    const resume = new Date(Date.now() + durationMins * 60 * 1000);
+    const resumeStr = resume.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    setBreakEndTime(resumeStr);
+    setIsOnBreak(true);
+    setBreakDuration(durationMins);
+    showToast(`Break mode on (${durationMins} min). Resuming at ${resumeStr}`, 'success');
+    try {
+      await apiRequest(`/queues/${branchId}/break`, {
+        method: 'PUT',
+        body: JSON.stringify({ doctorId, doctorName, onBreak: true, resumeAt: resumeStr }),
+      });
+    } catch { /* non-critical */ }
+  };
+
+  const handleEndBreak = async () => {
+    setIsOnBreak(false);
+    setBreakEndTime('');
+    setShowBreakPicker(false);
+    showToast('Break ended. You are back online.', 'success');
+    try {
+      await apiRequest(`/queues/${branchId}/break`, {
+        method: 'PUT',
+        body: JSON.stringify({ doctorId, doctorName, onBreak: false, resumeAt: null }),
+      });
+    } catch { /* non-critical */ }
   };
 
   const handleToggleAvailability = async () => {
@@ -453,6 +472,19 @@ export default function DoctorConsole() {
     };
   }, [branchId, doctorId]);
 
+  // Restore break status from socket store on mount / reconnect
+  useEffect(() => {
+    if (!doctorId) return;
+    const breakInfo = doctorBreakStatus[doctorId];
+    if (breakInfo) {
+      setIsOnBreak(true);
+      setBreakEndTime(breakInfo.resumeAt || '');
+    } else {
+      setIsOnBreak(false);
+      setBreakEndTime('');
+    }
+  }, [doctorId, doctorBreakStatus]);
+
   useEffect(() => {
     if (activeTab === 'Patients') {
       fetchPatients();
@@ -492,7 +524,7 @@ export default function DoctorConsole() {
     } else {
       setConsultNotes('');
     }
-  }, [currentPatient?.id]);
+  }, [currentPatient?.id, currentPatient?.notes, currentPatient?.chiefComplaint]);
 
   // Consultation timer — starts when a patient enters consultation
   useEffect(() => {
@@ -508,7 +540,7 @@ export default function DoctorConsole() {
       setConsultStartedAt(null);
       setConsultElapsed(0);
     }
-  }, [currentPatient?.id]);
+  }, [currentPatient?.id, currentPatient?.startTime]);
 
   // Auto-load last visit for returning patients
   useEffect(() => {
@@ -524,7 +556,7 @@ export default function DoctorConsole() {
       finally { setIsLoadingLastVisit(false); }
     };
     fetchLastVisit();
-  }, [currentPatient?.id]);
+  }, [currentPatient?.id, currentPatient?.patientId]);
 
   const handleSaveNotes = async () => {
     if (!currentPatient) return;
@@ -542,6 +574,12 @@ export default function DoctorConsole() {
   };
 
   const handleCallNext = async () => {
+    const waitingCount = activeQueue.filter(t => t.status === 'WAITING').length;
+    const hasInConsultation = activeQueue.some(t => t.status === 'IN_CONSULTATION');
+    if (waitingCount === 0 && !hasInConsultation) {
+      showToast('Queue is empty. No patients waiting.', 'error');
+      return;
+    }
     if (currentPatient && consultNotes) {
       await handleSaveNotes();
     }
@@ -876,7 +914,7 @@ export default function DoctorConsole() {
                           <p className="text-sm font-bold text-amber-800">You are on a break</p>
                           <p className="text-xs text-amber-600 mt-0.5">Queue is paused. Estimated resume: {breakEndTime}</p>
                         </div>
-                        <button onClick={handleToggleBreak} className="text-xs font-bold text-amber-700 border border-amber-300 px-2.5 py-1 rounded hover:bg-amber-100">Back Online</button>
+                        <button onClick={handleEndBreak} className="text-xs font-bold text-amber-700 border border-amber-300 px-2.5 py-1 rounded hover:bg-amber-100">Back Online</button>
                       </div>
                     )}
                     {isUnavailableToday && (
@@ -956,7 +994,15 @@ export default function DoctorConsole() {
                           )}
 
                           <div>
-                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#64748b] mb-1">Chief Complaint</h4>
+                            <div className="flex items-center gap-2 mb-1">
+                              <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#64748b]">Chief Complaint</h4>
+                              {(() => {
+                                const cat = getComplaintCategory(currentPatient.chiefComplaint);
+                                return cat ? (
+                                  <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border tracking-wider ${cat.cls}`}>{cat.label}</span>
+                                ) : null;
+                              })()}
+                            </div>
                             <p className="text-sm font-medium text-[#1a202c] bg-[#fbfbfa] p-3 rounded-md border border-[#e9e9e7]">
                               {currentPatient.chiefComplaint || 'No complaints noted by reception.'}
                             </p>
@@ -1029,6 +1075,23 @@ export default function DoctorConsole() {
                                 followUpDate={followUpDate}
                               />
                             </div>
+
+                            {/* Quick Diagnosis Tags */}
+                            <div className="flex flex-wrap gap-1.5 pt-2 border-t border-[#e9e9e7]">
+                              <p className="w-full text-[9px] text-[#64748b] font-bold uppercase tracking-wider mb-0.5">Quick Diagnosis Tags</p>
+                              {[
+                                'URTI', 'Viral Fever', 'Hypertension Review',
+                                'Diabetes Follow-up', 'Gastritis', 'Migraine',
+                                'Back Pain', 'UTI', 'Allergic Rhinitis', 'Anxiety',
+                              ].map(tag => (
+                                <button key={tag} type="button"
+                                  onClick={() => setConsultNotes(prev => prev ? `${prev}\nDx: ${tag}` : `Dx: ${tag}`)}
+                                  className="text-[9px] font-semibold text-[#64748b] bg-white border border-[#e9e9e7] px-2.5 py-1 rounded-md hover:border-[#01696f] hover:text-[#01696f] hover:bg-[#e6f3f4] transition-colors cursor-pointer shadow-xs"
+                                >
+                                  + {tag}
+                                </button>
+                              ))}
+                            </div>
                           </div>
 
                           <div className="flex items-center gap-3 pt-2 border-t border-[#e9e9e7]">
@@ -1062,8 +1125,8 @@ export default function DoctorConsole() {
                                 <ShieldAlert className="h-3.5 w-3.5" /> No-Show
                               </button>
                               <button
-                                onClick={handleToggleBreak}
-                                className={`px-4 py-2 border text-xs font-bold uppercase tracking-wider rounded-md flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${isOnBreak ? 'border-[#01696f] bg-[#e6f3f4] text-[#01696f]' : 'border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600'}`}
+                                onClick={() => isOnBreak ? handleEndBreak() : setShowBreakPicker(v => !v)}
+                                className={`px-4 py-2 border text-xs font-bold uppercase tracking-wider rounded-md flex items-center gap-1.5 transition-all cursor-pointer shadow-xs ${isOnBreak ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600'}`}
                               >
                                 <Coffee className="h-3.5 w-3.5" /> {isOnBreak ? 'End Break' : 'Break'}
                               </button>
@@ -1111,12 +1174,30 @@ export default function DoctorConsole() {
                           >
                             Call Next Patient <ChevronRight className="h-4 w-4" />
                           </button>
-                          <button
-                            onClick={handleToggleBreak}
-                            className={`px-4 py-3 border text-sm font-bold rounded-md flex items-center gap-2 cursor-pointer transition-all ${isOnBreak ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-[#e9e9e7] bg-white text-[#64748b] hover:bg-[#f4f4f3]'}`}
-                          >
-                            <Coffee className="h-4 w-4" /> {isOnBreak ? 'End Break' : 'Take Break'}
-                          </button>
+                          <div className="relative">
+                            <button
+                              onClick={() => isOnBreak ? handleEndBreak() : setShowBreakPicker(v => !v)}
+                              className={`px-4 py-3 border text-sm font-bold rounded-md flex items-center gap-2 cursor-pointer transition-all ${isOnBreak ? 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100' : 'border-[#e9e9e7] bg-white text-[#64748b] hover:bg-[#f4f4f3]'}`}
+                            >
+                              <Coffee className="h-4 w-4" /> {isOnBreak ? 'End Break' : 'Take Break'}
+                            </button>
+                            {showBreakPicker && !isOnBreak && (
+                              <div className="absolute bottom-full mb-2 left-0 bg-white border border-[#e9e9e7] rounded-xl shadow-xl p-3 z-30 w-52 animate-in fade-in slide-in-from-bottom-2">
+                                <p className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-2">Break duration</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {[5, 10, 15, 20, 30].map(min => (
+                                    <button
+                                      key={min}
+                                      onClick={() => handleStartBreak(min)}
+                                      className="px-3 py-1.5 bg-[#e6f3f4] hover:bg-[#01696f] hover:text-white text-[#01696f] text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                                    >
+                                      {min} min
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                           <button
                             onClick={handleToggleAvailability}
                             disabled={isTogglingAvailability}
@@ -1208,6 +1289,34 @@ export default function DoctorConsole() {
                       </div>
                       <span className="text-sm font-bold text-[#1a202c]">{performanceStats.noshowRate}%</span>
                     </div>
+
+                    {/* Live Throughput Bar */}
+                    {(() => {
+                      const total = servedToday.length + noShowToday.length + skippedToday.length + activeQueue.length;
+                      const pct = total > 0 ? Math.round((servedToday.length / total) * 100) : 0;
+                      if (total === 0) return null;
+                      return (
+                        <div className="pt-3 border-t border-[#e9e9e7] space-y-1.5">
+                          <div className="flex justify-between text-[10px] font-bold text-[#64748b]">
+                            <span className="uppercase tracking-wider">Today's Throughput</span>
+                            <span className="text-[#01696f]">{pct}%</span>
+                          </div>
+                          <div className="h-2 bg-[#f4f4f3] rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all duration-700"
+                              style={{
+                                width: `${pct}%`,
+                                background: pct >= 80 ? '#01696f' : pct >= 50 ? '#f59e0b' : '#ef4444',
+                              }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[10px] text-[#64748b]">
+                            <span>{servedToday.length} served · {noShowToday.length + skippedToday.length} skipped</span>
+                            <span>{activeQueue.length} active</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 

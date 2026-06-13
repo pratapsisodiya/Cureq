@@ -4,8 +4,8 @@ import React, { use, useState, useEffect } from 'react';
 import { apiRequest, BACKEND_URL } from '../../../src/utils/api';
 import io from 'socket.io-client';
 import { 
-  Activity, Clock, Users, ArrowRightLeft, FileText, 
-  MapPin, CheckCircle, Bell, ArrowRight, Printer
+  Activity, Clock, Users, ArrowRightLeft, FileText,
+  MapPin, CheckCircle, Bell, ArrowRight, Printer, Share2, Copy, Check
 } from 'lucide-react';
 
 interface TrackerParams {
@@ -36,6 +36,7 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
   // History states
   const [historyLogs, setHistoryLogs] = useState<any[]>([]);
   const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [copied, setCopied] = useState(false);
 
   // 1. Fetch token status and details
   const fetchTokenStatus = async () => {
@@ -89,16 +90,18 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
     });
 
     // Also join branch room to track currently serving token changes
+    const queueUpdatedHandler = (data: any) => {
+      const activeConsult = data.queue?.find((t: any) => t.status === 'IN_CONSULTATION');
+      setCurrentlyServing(activeConsult ? activeConsult.tokenNo : 'None');
+    };
+
     if (tokenData?.branchId) {
       socket.emit('join:branch', tokenData.branchId);
-      socket.on('queue:updated', (data: any) => {
-        // Sync currently serving token
-        const activeConsult = data.queue?.find((t: any) => t.status === 'IN_CONSULTATION');
-        setCurrentlyServing(activeConsult ? activeConsult.tokenNo : 'None');
-      });
+      socket.on('queue:updated', queueUpdatedHandler);
     }
 
     return () => {
+      socket.off('queue:updated', queueUpdatedHandler);
       socket.disconnect();
     };
   }, [tokenId, tokenData?.branchId]);
@@ -184,6 +187,56 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
             <p className="text-[10px] text-gray-500 mt-1 font-light">{tokenData.branch.address}</p>
           )}
         </div>
+
+        {/* Doctor Delay Warning Alert */}
+        {tokenData.status === 'WAITING' && tokenData.doctor && tokenData.doctor.delayBuffer > 0 && (
+          <div className="bg-amber-950/20 border border-amber-900/50 p-4 rounded-[4px] space-y-1 text-xs text-amber-400 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="font-bold flex items-center gap-1.5">
+              <span className="animate-pulse h-2 w-2 rounded-full bg-amber-500"></span>
+              ⚠️ Doctor Delay Notice
+            </div>
+            <p className="font-light leading-relaxed">
+              Dr. {tokenData.doctor.user?.name || tokenData.doctorName} is running approximately {tokenData.doctor.delayBuffer} minutes behind schedule. Your estimated wait time has been automatically adjusted.
+            </p>
+          </div>
+        )}
+
+        {/* Patient Journey Timeline */}
+        {tokenData.status !== 'SKIPPED' && tokenData.status !== 'NO_SHOW' && (
+          <div className="space-y-2">
+            <p className="text-[9px] text-gray-500 font-semibold uppercase tracking-widest text-center">Your Visit Journey</p>
+            <div className="flex items-center justify-between">
+              {[
+                { label: 'Registered', done: true, active: false },
+                { label: 'Seated', done: tokenData.seatStatus === 'SEATED' || tokenData.status === 'IN_CONSULTATION' || tokenData.status === 'SERVED', active: tokenData.status === 'WAITING' && tokenData.seatStatus !== 'SEATED' },
+                { label: 'Consulting', done: tokenData.status === 'IN_CONSULTATION' || tokenData.status === 'SERVED', active: tokenData.status === 'IN_CONSULTATION' },
+                { label: 'Complete', done: tokenData.status === 'SERVED', active: false },
+              ].map((step, i, arr) => (
+                <React.Fragment key={step.label}>
+                  <div className="flex flex-col items-center gap-1.5">
+                    <div className={`h-7 w-7 rounded-full border-2 flex items-center justify-center transition-all ${
+                      step.done
+                        ? 'bg-[#01696f] border-[#01696f] text-white'
+                        : step.active
+                          ? 'bg-[#01696f]/10 border-[#01696f] text-[#01696f] animate-pulse'
+                          : 'bg-[#0d1516] border-[#1c2e31] text-gray-600'
+                    }`}>
+                      {step.done
+                        ? <CheckCircle className="h-3.5 w-3.5" />
+                        : <span className="text-[9px] font-bold">{i + 1}</span>}
+                    </div>
+                    <span className={`text-[9px] font-semibold ${step.done ? 'text-[#01696f]' : step.active ? 'text-gray-300' : 'text-gray-600'}`}>
+                      {step.label}
+                    </span>
+                  </div>
+                  {i < arr.length - 1 && (
+                    <div className={`flex-1 h-0.5 mx-1 mb-5 transition-all duration-700 ${step.done ? 'bg-[#01696f]' : 'bg-[#1c2e31]'}`} />
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Live Token Status Box */}
         <div className="bg-[#0d1516] border border-[#1c2e31] p-6 rounded-[6px] text-center">
@@ -427,7 +480,32 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
         </div>
       )}
 
-      <footer className="text-[10px] text-gray-400 mt-12 text-center">
+      {/* Share token link */}
+      <div className="mt-8 flex flex-col items-center gap-2">
+        <button
+          onClick={() => {
+            const url = window.location.href;
+            navigator.clipboard.writeText(url).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2500);
+            });
+          }}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold border transition-all duration-200 ${
+            copied
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              : 'bg-white text-[#01696f] border-[#e9e9e7] hover:border-[#01696f] hover:bg-[#f0fafb]'
+          }`}
+        >
+          {copied ? (
+            <><Check className="h-3.5 w-3.5" /> Link Copied!</>
+          ) : (
+            <><Share2 className="h-3.5 w-3.5" /> Share Token Link</>
+          )}
+        </button>
+        <p className="text-[9px] text-gray-400">Share this page link to let family track your queue position</p>
+      </div>
+
+      <footer className="text-[10px] text-gray-400 mt-6 text-center">
         Powered by CureQ Queue Management Engine.
       </footer>
     </div>

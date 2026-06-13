@@ -298,15 +298,34 @@ router.post('/:branchId/token', async (req, res) => {
       where: { phone: patientPhone, role: 'PATIENT' }
     });
 
+    // Run AI Triage if chiefComplaint is present
+    let triageUrgency: string | undefined = undefined;
+    let triageReasoning: string | undefined = undefined;
+    let triageSymptoms: string | undefined = undefined;
+
+    if (chiefComplaint && chiefComplaint.trim().length >= 3) {
+      try {
+        const triageResult = await aiService.triagePatient(chiefComplaint.trim());
+        triageUrgency = triageResult.urgency;
+        triageReasoning = triageResult.reasoning;
+        triageSymptoms = triageResult.symptoms.join(', ');
+      } catch (err) {
+        console.error('AI Triage failed during checkin:', err);
+      }
+    }
+
     // 4. Create Token in DB
     const token = await prisma.token.create({
       data: {
         tokenNo,
         queueOrder,
-        type: (type as TokenType) || 'GENERAL',
+        type: triageUrgency ? (triageUrgency as TokenType) : ((type as TokenType) || 'GENERAL'),
         visitType: (visitType as VisitType) || 'NEW',
         status: 'WAITING',
         chiefComplaint: chiefComplaint || null,
+        triageUrgency: triageUrgency || null,
+        triageReasoning: triageReasoning || null,
+        triageSymptoms: triageSymptoms || null,
         estimatedWait: eta,
         patientPhone,
         patientName,
@@ -338,6 +357,9 @@ router.post('/:branchId/token', async (req, res) => {
       visitType: token.visitType,
       status: token.status,
       chiefComplaint: token.chiefComplaint,
+      triageUrgency: token.triageUrgency,
+      triageReasoning: token.triageReasoning,
+      triageSymptoms: token.triageSymptoms,
       notes: token.notes,
       estimatedWait: token.estimatedWait,
       checkInTime: token.checkInTime.toISOString(),
@@ -896,14 +918,33 @@ router.post('/:branchId/self-checkin', async (req, res) => {
 
     const patientUser = await prisma.user.findFirst({ where: { phone: patientPhone, role: 'PATIENT' } });
 
+    // Run AI Triage if chiefComplaint is present
+    let triageUrgency: string | undefined = undefined;
+    let triageReasoning: string | undefined = undefined;
+    let triageSymptoms: string | undefined = undefined;
+
+    if (chiefComplaint && chiefComplaint.trim().length >= 3) {
+      try {
+        const triageResult = await aiService.triagePatient(chiefComplaint.trim());
+        triageUrgency = triageResult.urgency;
+        triageReasoning = triageResult.reasoning;
+        triageSymptoms = triageResult.symptoms.join(', ');
+      } catch (err) {
+        console.error('AI Triage failed during patient self checkin:', err);
+      }
+    }
+
     const token = await prisma.token.create({
       data: {
         tokenNo,
         queueOrder,
-        type: 'GENERAL',
+        type: triageUrgency ? (triageUrgency as TokenType) : 'GENERAL',
         visitType: (visitType as VisitType) || 'NEW',
         status: 'WAITING',
         chiefComplaint: chiefComplaint || null,
+        triageUrgency: triageUrgency || null,
+        triageReasoning: triageReasoning || null,
+        triageSymptoms: triageSymptoms || null,
         estimatedWait: eta,
         patientPhone,
         patientName,
@@ -915,12 +956,25 @@ router.post('/:branchId/self-checkin', async (req, res) => {
     });
 
     const activeTokenCached = {
-      id: token.id, tokenNo: token.tokenNo, patientName: token.patientName,
-      patientPhone: token.patientPhone, patientId: token.patientId, appointmentId: null,
-      type: token.type, visitType: token.visitType, status: token.status,
-      chiefComplaint: token.chiefComplaint, notes: token.notes, estimatedWait: token.estimatedWait,
-      checkInTime: token.checkInTime.toISOString(), startTime: null,
-      queueOrder: token.queueOrder, seatStatus: token.seatStatus,
+      id: token.id,
+      tokenNo: token.tokenNo,
+      patientName: token.patientName,
+      patientPhone: token.patientPhone,
+      patientId: token.patientId,
+      appointmentId: null,
+      type: token.type,
+      visitType: token.visitType,
+      status: token.status,
+      chiefComplaint: token.chiefComplaint,
+      triageUrgency: token.triageUrgency,
+      triageReasoning: token.triageReasoning,
+      triageSymptoms: token.triageSymptoms,
+      notes: token.notes,
+      estimatedWait: token.estimatedWait,
+      checkInTime: token.checkInTime.toISOString(),
+      startTime: null,
+      queueOrder: token.queueOrder,
+      seatStatus: token.seatStatus,
     };
 
     await queueCache.addToken(branchId, doctorId, activeTokenCached);
@@ -939,6 +993,63 @@ router.post('/:branchId/self-checkin', async (req, res) => {
   } catch (err) {
     console.error('Self check-in error:', err);
     res.status(500).json({ error: 'Check-in failed. Please ask the receptionist for help.' });
+  }
+});
+
+/**
+ * @route   PUT /api/queues/doctors/:doctorId/buffer
+ * @desc    Set delay buffer for a doctor and recalculate active queue ETAs
+ */
+router.put('/doctors/:doctorId/buffer', async (req, res) => {
+  const { doctorId } = req.params;
+  const { delayBuffer, branchId } = req.body;
+
+  if (delayBuffer === undefined || !branchId) {
+    return res.status(400).json({ error: 'Please provide delayBuffer and branchId.' });
+  }
+
+  try {
+    // 1. Update the DoctorProfile delayBuffer
+    await prisma.doctorProfile.update({
+      where: { id: doctorId },
+      data: { delayBuffer: parseInt(delayBuffer) },
+    });
+
+    // 2. Fetch the active queue from cache
+    const activeQueue = await queueCache.getQueue(branchId, doctorId);
+
+    // 3. Recalculate ETA for each active token in the cache
+    let waitingCount = 0;
+    const updatedQueue = [];
+
+    for (const token of activeQueue) {
+      if (token.status === 'WAITING') {
+        const newEta = await aiService.getEstimatedWaitTime(branchId, doctorId, waitingCount);
+        token.estimatedWait = newEta;
+        waitingCount++;
+
+        // Update the token's estimatedWait in the database as well so it persists
+        await prisma.token.update({
+          where: { id: token.id },
+          data: { estimatedWait: newEta },
+        });
+      }
+      updatedQueue.push(token);
+    }
+
+    // 4. Save updated queue back to cache
+    await queueCache.saveQueue(branchId, doctorId, updatedQueue);
+
+    // 5. Broadcast queue update via Socket.IO
+    const io = req.app.get('io');
+    if (io) {
+      broadcastQueueUpdate(io, branchId, doctorId, updatedQueue);
+    }
+
+    res.json({ message: 'Delay buffer updated and ETAs recalculated.', delayBuffer, queue: updatedQueue });
+  } catch (err) {
+    console.error('Error updating doctor delay buffer:', err);
+    res.status(500).json({ error: 'Failed to update delay buffer.' });
   }
 });
 

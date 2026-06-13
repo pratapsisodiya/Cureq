@@ -36,7 +36,7 @@ export default function ReceptionDashboard() {
   const {
     activeQueue, servedToday, skippedToday, noShowToday,
     fetchQueue, initSocket, disconnectSocket, reorderQueue, recallToken, updateSeatsCapacity,
-    doctorBreakStatus
+    doctorBreakStatus, isConnected
   } = useQueueStore();
 
   const { showToast, ToastComponent } = useToast();
@@ -48,6 +48,7 @@ export default function ReceptionDashboard() {
   const [doctorsList, setDoctorsList] = useState<any[]>([]);
   const [selectedDoctorId, setSelectedDoctorId] = useState('');
   const [isDocDropdownOpen, setIsDocDropdownOpen] = useState(false);
+  const [delayBuffer, setDelayBuffer] = useState(0);
   
   // UI Tabs
   const [activeTab, setActiveTab] = useState('Dashboard');
@@ -107,6 +108,8 @@ export default function ReceptionDashboard() {
   const [newDoctorDays, setNewDoctorDays] = useState([1,2,3,4,5]);
   const [newDoctorStart, setNewDoctorStart] = useState('09:00');
   const [newDoctorEnd, setNewDoctorEnd] = useState('17:00');
+  const [newDoctorSlotDuration, setNewDoctorSlotDuration] = useState(15);
+  const [newDoctorMaxPatients, setNewDoctorMaxPatients] = useState(30);
   const [isAddingDoctor, setIsAddingDoctor] = useState(false);
 
   // Manage Schedule modal
@@ -176,14 +179,17 @@ export default function ReceptionDashboard() {
         setWaitingSeats(branch.waitingSeats || 10);
       }
       const schedules = branch?.schedules || [];
-      const docs: any[] = [];
+      // Build doctor list with their schedules attached
+      const docMap = new Map<string, any>();
       schedules.forEach((s: any) => {
-        if (!docs.some(d => d.id === s.doctor.id)) {
-          docs.push(s.doctor);
+        if (!docMap.has(s.doctor.id)) {
+          docMap.set(s.doctor.id, { ...s.doctor, schedules: [] });
         }
+        docMap.get(s.doctor.id).schedules.push(s);
       });
+      const docs = Array.from(docMap.values());
       setDoctorsList(docs);
-      if (docs.length > 0) {
+      if (docs.length > 0 && !selectedDoctorId) {
         setSelectedDoctorId(docs[0].id);
       }
 
@@ -221,11 +227,16 @@ export default function ReceptionDashboard() {
       fetchQueue(branchId, selectedDoctorId);
       initSocket(branchId);
       checkWorkloadBalance(branchId);
+
+      const activeDoc = doctorsList.find(d => d.id === selectedDoctorId);
+      if (activeDoc) {
+        setDelayBuffer(activeDoc.delayBuffer || 0);
+      }
     }
     return () => {
       disconnectSocket();
     };
-  }, [branchId, selectedDoctorId]);
+  }, [branchId, selectedDoctorId, doctorsList]);
 
   const checkWorkloadBalance = async (bid: string) => {
     try {
@@ -241,6 +252,27 @@ export default function ReceptionDashboard() {
       }
     } catch {
       // silently ignore — non-critical
+    }
+  };
+
+  const handleUpdateBuffer = async (newBuffer: number) => {
+    if (!selectedDoctorId || !branchId) return;
+    try {
+      await apiRequest(`/queues/doctors/${selectedDoctorId}/buffer`, {
+        method: 'PUT',
+        body: JSON.stringify({ delayBuffer: newBuffer, branchId })
+      });
+      setDelayBuffer(newBuffer);
+      
+      // Update the doctor's buffer in the doctorsList state so it stays synced
+      setDoctorsList(prev => prev.map(d => d.id === selectedDoctorId ? { ...d, delayBuffer: newBuffer } : d));
+      
+      showToast(`Doctor delay buffer set to ${newBuffer} minutes.`, 'success');
+      
+      // Refresh the queue to get recalculated ETAs
+      fetchQueue(branchId, selectedDoctorId);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update delay buffer.', 'error');
     }
   };
 
@@ -421,8 +453,8 @@ export default function ReceptionDashboard() {
         dayOfWeek: day,
         startTime: newDoctorStart,
         endTime: newDoctorEnd,
-        slotDuration: 15,
-        maxPatients: 30,
+        slotDuration: newDoctorSlotDuration,
+        maxPatients: newDoctorMaxPatients,
         bufferTime: 5,
       }));
       await apiRequest(`/clinics/${clinicId}/doctors`, {
@@ -440,19 +472,25 @@ export default function ReceptionDashboard() {
       setIsAddDoctorOpen(false);
       setNewDoctorName(''); setNewDoctorEmail(''); setNewDoctorPhone('');
       setNewDoctorPassword('DoctorCureQ123!');
+      setNewDoctorDays([1,2,3,4,5]); setNewDoctorSlotDuration(15); setNewDoctorMaxPatients(30);
       showToast('Doctor added successfully!', 'success');
-      // Refresh doctors list
-      const res = await apiRequest(`/clinics/${clinicId}`);
-      const branch = res.clinic?.branches?.find((b: any) => b.id === branchId);
-      if (branch?.schedules) {
-        const unique = new Map();
-        branch.schedules.forEach((s: any) => { if (!unique.has(s.doctor.id)) unique.set(s.doctor.id, s.doctor); });
-        setDoctorsList(Array.from(unique.values()));
-      }
+      fetchDoctors(clinicId);
     } catch (err: any) {
       showToast(err.message || 'Failed to add doctor.', 'error');
     } finally {
       setIsAddingDoctor(false);
+    }
+  };
+
+  const handleRemoveDoctor = async (doctorId: string, doctorName: string) => {
+    if (!confirm(`Remove Dr. ${doctorName} from this clinic? Their schedules will be deleted.`)) return;
+    try {
+      await apiRequest(`/clinics/${clinicId}/doctors/${doctorId}`, { method: 'DELETE' });
+      showToast(`Dr. ${doctorName} removed from clinic.`, 'success');
+      if (selectedDoctorId === doctorId) setSelectedDoctorId('');
+      fetchDoctors(clinicId);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to remove doctor.', 'error');
     }
   };
 
@@ -746,6 +784,41 @@ export default function ReceptionDashboard() {
                   {doctorBreakStatus[selectedDoctorId].resumeAt && ` · ~${doctorBreakStatus[selectedDoctorId].resumeAt}`}
                 </span>
               )}
+              {selectedDoctorId && (
+                <div className="flex items-center gap-1.5 bg-gray-50 border border-[#e9e9e7] px-2.5 py-1.5 rounded-lg text-xs">
+                  <span className="font-semibold text-gray-600 flex items-center gap-1">
+                    ⏱️ Delay: {delayBuffer > 0 ? `${delayBuffer}m` : 'None'}
+                  </span>
+                  <div className="flex items-center gap-1 ml-1 border-l border-[#e9e9e7] pl-1.5">
+                    <button 
+                      onClick={() => handleUpdateBuffer(delayBuffer + 10)}
+                      className="px-1.5 py-0.5 bg-white hover:bg-gray-100 border border-gray-200 rounded text-[9px] font-bold text-gray-700 active:scale-95 transition-transform"
+                    >
+                      +10m
+                    </button>
+                    <button 
+                      onClick={() => handleUpdateBuffer(delayBuffer + 20)}
+                      className="px-1.5 py-0.5 bg-white hover:bg-gray-100 border border-gray-200 rounded text-[9px] font-bold text-gray-700 active:scale-95 transition-transform"
+                    >
+                      +20m
+                    </button>
+                    {delayBuffer > 0 && (
+                      <button 
+                        onClick={() => handleUpdateBuffer(0)}
+                        className="px-1.5 py-0.5 bg-red-50 hover:bg-red-100 border border-red-200 rounded text-[9px] font-bold text-red-600 active:scale-95 transition-transform"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+              <button
+                onClick={() => setIsAddDoctorOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#01696f] text-white rounded-lg text-xs font-bold hover:bg-[#005459] transition-colors shadow-xs"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Doctor
+              </button>
             </div>
           ) : (
             <div className="font-bold text-[#1a202c] flex items-center gap-2">
@@ -887,8 +960,42 @@ export default function ReceptionDashboard() {
         ) : (
           /* RECEPTION DASHBOARD */
           <>
+            {/* Socket Disconnect Banner */}
+            {!isConnected && (
+              <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs font-semibold text-amber-800 flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
+                Live sync disconnected — attempting to reconnect...
+              </div>
+            )}
+
             {activeTab === 'Dashboard' && (
               <div className="p-8 max-w-7xl mx-auto w-full space-y-8 animate-in fade-in duration-300">
+
+                {/* Emergency Patient Alert */}
+                {activeQueue.filter(t => t.type === 'EMERGENCY' && t.status === 'WAITING').length > 0 && (
+                  <div className="flex items-center gap-3 px-5 py-3.5 rounded-xl border border-red-200 bg-gradient-to-r from-red-50 to-rose-50 shadow-sm animate-in fade-in slide-in-from-top-1 duration-300">
+                    <div className="h-9 w-9 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="h-4.5 w-4.5 text-red-600 animate-pulse" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-red-800 uppercase tracking-wider">
+                        {activeQueue.filter(t => t.type === 'EMERGENCY' && t.status === 'WAITING').length === 1
+                          ? 'Emergency Patient in Queue'
+                          : `${activeQueue.filter(t => t.type === 'EMERGENCY' && t.status === 'WAITING').length} Emergency Patients Waiting`}
+                      </p>
+                      <div className="flex flex-wrap gap-2 mt-1.5">
+                        {activeQueue.filter(t => t.type === 'EMERGENCY' && t.status === 'WAITING').map(t => (
+                          <span key={t.id} className="text-[11px] text-red-700 font-bold bg-red-100 px-2.5 py-0.5 rounded-full border border-red-200">
+                            {t.tokenNo} · {t.patientName}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-red-600 border border-red-200 bg-red-50 px-2.5 py-1 rounded-lg shrink-0 tracking-wider uppercase animate-pulse">
+                      Urgent
+                    </span>
+                  </div>
+                )}
 
                 {/* AI Workload Balance Alert */}
                 {workloadAlert && (
@@ -1231,9 +1338,35 @@ export default function ReceptionDashboard() {
                               </div>
                             </td>
                             <td className="px-5 py-4">
-                              <span className={`px-2 py-1 text-[9px] uppercase font-bold rounded shadow-xs border ${token.type === 'EMERGENCY' ? 'bg-red-50 text-red-700 border-red-200' : token.type === 'PRIORITY' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-700 border-gray-200'}`}>
-                                {token.type}
-                              </span>
+                              <div className="relative group inline-block">
+                                <span className={`px-2 py-1 text-[9px] uppercase font-bold rounded shadow-xs border flex items-center gap-1 cursor-help transition-all duration-200 ${
+                                  token.triageUrgency === 'EMERGENCY' || token.type === 'EMERGENCY'
+                                    ? 'bg-red-50 text-red-700 border-red-200 animate-pulse font-extrabold shadow-sm'
+                                    : token.triageUrgency === 'PRIORITY' || token.type === 'PRIORITY'
+                                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : 'bg-gray-50 text-gray-700 border-gray-200'
+                                }`}>
+                                  {token.triageUrgency ? '✨ AI ' : ''}{token.triageUrgency || token.type}
+                                </span>
+                                
+                                {(token.triageReasoning || token.triageSymptoms) && (
+                                  <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 hidden group-hover:block w-72 bg-white text-[#1a202c] border border-gray-200 p-3 rounded-lg shadow-xl z-50 text-xs font-normal pointer-events-none transition-all duration-200">
+                                    <div className="font-bold text-[#01696f] mb-1 flex items-center gap-1">
+                                      <span>🤖</span> AI Smart Triage Analysis
+                                    </div>
+                                    {token.triageSymptoms && (
+                                      <div className="mb-1.5 text-gray-700">
+                                        <span className="font-semibold text-gray-500">Symptoms:</span> {token.triageSymptoms}
+                                      </div>
+                                    )}
+                                    {token.triageReasoning && (
+                                      <div className="text-gray-700 leading-relaxed">
+                                        <span className="font-semibold text-gray-500">Reasoning:</span> {token.triageReasoning}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             </td>
                             <td className="px-5 py-4">
                               <span className={`px-2 py-1 text-[10px] font-bold rounded border ${getUrgencyBadge(token.estimatedWait)}`}>
@@ -1291,6 +1424,53 @@ export default function ReceptionDashboard() {
                 )}
               </div>
             </div>
+
+            {/* Today's Activity Feed */}
+            {(servedToday.length + skippedToday.length + noShowToday.length) > 0 && (
+              <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden">
+                <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa] flex items-center justify-between">
+                  <h2 className="text-sm font-bold text-[#1a202c] flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-[#64748b]" /> Today's Activity
+                  </h2>
+                  <span className="text-[10px] font-bold text-[#64748b] bg-[#f4f4f3] px-2.5 py-1 rounded-full border border-[#e9e9e7]">
+                    {servedToday.length + skippedToday.length + noShowToday.length} events
+                  </span>
+                </div>
+                <div className="divide-y divide-[#e9e9e7] max-h-52 overflow-y-auto">
+                  {[
+                    ...servedToday.map(t => ({ ...t, _evt: 'served' as const })),
+                    ...skippedToday.map(t => ({ ...t, _evt: 'skipped' as const })),
+                    ...noShowToday.map(t => ({ ...t, _evt: 'noshow' as const })),
+                  ]
+                    .sort((a, b) => new Date(b.checkInTime).getTime() - new Date(a.checkInTime).getTime())
+                    .map(t => (
+                      <div key={t.id + t._evt} className="px-5 py-3 flex items-center gap-3 hover:bg-[#fbfbfa] transition-colors">
+                        <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold ${
+                          t._evt === 'served' ? 'bg-emerald-100 text-emerald-700' :
+                          t._evt === 'skipped' ? 'bg-amber-100 text-amber-700' :
+                          'bg-red-100 text-red-700'
+                        }`}>
+                          {t._evt === 'served' ? '✓' : t._evt === 'skipped' ? '→' : '✗'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-[#1a202c]">{t.patientName}</span>
+                            <span className="font-mono text-[9px] text-[#64748b] bg-[#f4f4f3] px-1.5 py-0.5 rounded">#{t.tokenNo}</span>
+                          </div>
+                          <p className="text-[10px] text-[#64748b] truncate mt-0.5">{t.chiefComplaint || t.visitType || '—'}</p>
+                        </div>
+                        <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0 ${
+                          t._evt === 'served' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                          t._evt === 'skipped' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                          'bg-red-50 text-red-700 border-red-200'
+                        }`}>
+                          {t._evt === 'served' ? 'Served' : t._evt === 'skipped' ? 'Skipped' : 'No-Show'}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
           )}
 
@@ -1489,22 +1669,45 @@ export default function ReceptionDashboard() {
                     <Bell className="h-4 w-4 text-[#01696f]" /> Broadcast Alert to Waiting Patients
                   </h2>
                 </div>
-                <div className="p-6 flex gap-3">
-                  <input
-                    type="text"
-                    placeholder="e.g. Doctor will be available in 15 minutes. Thank you for your patience."
-                    className="flex-1 px-3 py-2 border border-[#e9e9e7] rounded-md text-sm focus:outline-none focus:border-[#01696f] shadow-inner"
-                    value={broadcastMsg}
-                    onChange={(e) => setBroadcastMsg(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleBroadcast()}
-                  />
-                  <button
-                    onClick={handleBroadcast}
-                    disabled={isBroadcasting || !broadcastMsg.trim()}
-                    className="px-4 py-2 bg-[#01696f] text-white text-sm font-bold rounded-md hover:bg-[#005459] disabled:opacity-50 shadow-xs transition-colors whitespace-nowrap"
-                  >
-                    {isBroadcasting ? 'Sending...' : 'Send Alert'}
-                  </button>
+                <div className="p-6 space-y-4">
+                  <div>
+                    <p className="text-[10px] text-[#64748b] font-bold uppercase tracking-wider mb-2">Quick Templates</p>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        'Doctor will be available in 15 minutes. Thank you for your patience.',
+                        'Queue is busy today. Expected wait: 30–45 mins.',
+                        'Please have your medical records ready before entering.',
+                        'Emergency case in progress. Regular patients please wait.',
+                        'Queue has resumed. Please be ready when your token is called.',
+                      ].map(msg => (
+                        <button
+                          key={msg}
+                          type="button"
+                          onClick={() => setBroadcastMsg(msg)}
+                          className="text-[10px] text-[#64748b] border border-[#e9e9e7] bg-[#fbfbfa] hover:border-[#01696f] hover:text-[#01696f] hover:bg-[#e6f3f4] px-3 py-1.5 rounded-lg transition-colors cursor-pointer font-medium"
+                        >
+                          {msg.length > 48 ? msg.substring(0, 48) + '…' : msg}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      placeholder="e.g. Doctor will be available in 15 minutes. Thank you for your patience."
+                      className="flex-1 px-3 py-2 border border-[#e9e9e7] rounded-md text-sm focus:outline-none focus:border-[#01696f] shadow-inner"
+                      value={broadcastMsg}
+                      onChange={(e) => setBroadcastMsg(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleBroadcast()}
+                    />
+                    <button
+                      onClick={handleBroadcast}
+                      disabled={isBroadcasting || !broadcastMsg.trim()}
+                      className="px-4 py-2 bg-[#01696f] text-white text-sm font-bold rounded-md hover:bg-[#005459] disabled:opacity-50 shadow-xs transition-colors whitespace-nowrap"
+                    >
+                      {isBroadcasting ? 'Sending...' : 'Send Alert'}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1582,7 +1785,10 @@ export default function ReceptionDashboard() {
               {/* Doctors List */}
               <div className="bg-white border border-[#e9e9e7] rounded-xl shadow-xs overflow-hidden">
                 <div className="px-6 py-4 border-b border-[#e9e9e7] bg-[#fbfbfa] flex justify-between items-center">
-                  <h2 className="font-bold text-[#1a202c]">Onboarded Doctors</h2>
+                  <div>
+                    <h2 className="font-bold text-[#1a202c]">Onboarded Doctors</h2>
+                    <p className="text-[10px] text-[#64748b] mt-0.5">{doctorsList.length} doctor{doctorsList.length !== 1 ? 's' : ''} in this clinic</p>
+                  </div>
                   <button
                     onClick={() => setIsAddDoctorOpen(true)}
                     className="flex items-center gap-1.5 text-xs text-white bg-[#01696f] px-3 py-1.5 rounded-md font-bold hover:bg-[#005459] transition-colors"
@@ -1592,26 +1798,51 @@ export default function ReceptionDashboard() {
                 </div>
                 <div className="p-0">
                   {doctorsList.map((doc, idx) => (
-                    <div key={idx} className="px-6 py-4 border-b border-[#e9e9e7] last:border-0 flex justify-between items-center hover:bg-[#fbfbfa]">
-                      <div className="flex items-center gap-4">
-                        <div className="h-10 w-10 bg-[#e6f3f4] text-[#01696f] rounded-full flex items-center justify-center font-bold text-sm">
+                    <div key={doc.id || idx} className="px-6 py-4 border-b border-[#e9e9e7] last:border-0 flex justify-between items-center hover:bg-[#fbfbfa] gap-3">
+                      <div className="flex items-center gap-4 min-w-0">
+                        <div className="h-10 w-10 bg-[#e6f3f4] text-[#01696f] rounded-full flex items-center justify-center font-bold text-sm flex-shrink-0">
                           {doc.user?.name ? doc.user.name.charAt(0) : 'D'}
                         </div>
-                        <div>
-                          <p className="text-sm font-bold text-[#1a202c]">{doc.user?.name || 'Doctor'}</p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-[#1a202c]">Dr. {doc.user?.name || 'Doctor'}</p>
                           <p className="text-xs text-[#64748b] mt-0.5">{doc.speciality}</p>
+                          <div className="flex items-center gap-3 mt-1 flex-wrap">
+                            {doc.user?.email && (
+                              <span className="text-[10px] text-[#64748b] font-mono">{doc.user.email}</span>
+                            )}
+                            {doc.user?.phone && (
+                              <span className="text-[10px] text-[#64748b]">{doc.user.phone}</span>
+                            )}
+                            {doc.schedules && doc.schedules.length > 0 && (
+                              <span className="text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-bold">
+                                {doc.schedules.filter((s: any) => s.active !== false).length} active days
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                      <button
-                        onClick={() => openManageSchedule(doc)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 border border-[#e9e9e7] bg-white rounded text-xs font-semibold hover:bg-[#f4f4f3] transition-colors"
-                      >
-                        <Calendar className="h-3.5 w-3.5 text-[#01696f]" /> Manage Schedule
-                      </button>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => openManageSchedule(doc)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 border border-[#e9e9e7] bg-white rounded text-xs font-semibold hover:bg-[#f4f4f3] transition-colors"
+                        >
+                          <Calendar className="h-3.5 w-3.5 text-[#01696f]" /> Schedule
+                        </button>
+                        <button
+                          onClick={() => handleRemoveDoctor(doc.id, doc.user?.name || 'Doctor')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 border border-red-200 bg-white rounded text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash className="h-3.5 w-3.5" /> Remove
+                        </button>
+                      </div>
                     </div>
                   ))}
                   {doctorsList.length === 0 && (
-                     <div className="p-6 text-sm text-[#64748b] text-center">No doctors found.</div>
+                    <div className="p-10 text-center">
+                      <Users className="h-10 w-10 text-[#e9e9e7] mx-auto mb-3" />
+                      <p className="text-sm font-medium text-[#1a202c]">No doctors yet</p>
+                      <p className="text-xs text-[#64748b] mt-1">Add your first doctor to start managing queues.</p>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1787,6 +2018,18 @@ export default function ReceptionDashboard() {
                   <input type="time" value={newDoctorEnd} onChange={e => setNewDoctorEnd(e.target.value)} className="w-full px-3 py-2 border border-[#e9e9e7] rounded-lg text-sm focus:outline-none focus:border-[#01696f]" />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-[#64748b] mb-1">Slot Duration (min)</label>
+                  <select value={newDoctorSlotDuration} onChange={e => setNewDoctorSlotDuration(parseInt(e.target.value))} className="w-full px-3 py-2 border border-[#e9e9e7] rounded-lg text-sm focus:outline-none focus:border-[#01696f]">
+                    {[5, 10, 15, 20, 30, 45, 60].map(m => <option key={m} value={m}>{m} min</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-[#64748b] mb-1">Max Patients / Day</label>
+                  <input type="number" min={1} max={200} value={newDoctorMaxPatients} onChange={e => setNewDoctorMaxPatients(parseInt(e.target.value) || 30)} className="w-full px-3 py-2 border border-[#e9e9e7] rounded-lg text-sm focus:outline-none focus:border-[#01696f]" />
+                </div>
+              </div>
               <div className="flex justify-end gap-3 pt-2 border-t border-[#e9e9e7]">
                 <button type="button" onClick={() => setIsAddDoctorOpen(false)} className="px-4 py-2 border border-[#e9e9e7] rounded-lg text-sm font-semibold text-[#64748b] hover:bg-[#f4f4f3]">Cancel</button>
                 <button type="submit" disabled={isAddingDoctor} className="px-4 py-2 bg-[#01696f] text-white rounded-lg text-sm font-bold hover:bg-[#005459] disabled:opacity-50">
@@ -1848,8 +2091,17 @@ export default function ReceptionDashboard() {
                             updated[idx] = { ...s, slotDuration: parseInt(e.target.value) };
                             setManagedSchedules(updated);
                           }} className="px-2 py-1 border border-[#e9e9e7] rounded text-xs focus:outline-none focus:border-[#01696f]">
-                            {[10,15,20,30,45,60].map(m => <option key={m} value={m}>{m}min</option>)}
+                            {[5,10,15,20,30,45,60].map(m => <option key={m} value={m}>{m}min</option>)}
                           </select>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[#64748b]">Max:</span>
+                          <input type="number" min={1} max={200} value={s.maxPatients} onChange={e => {
+                            const updated = [...managedSchedules];
+                            updated[idx] = { ...s, maxPatients: parseInt(e.target.value) || 30 };
+                            setManagedSchedules(updated);
+                          }} className="w-14 px-2 py-1 border border-[#e9e9e7] rounded text-xs focus:outline-none focus:border-[#01696f]" />
+                          <span className="text-[#64748b]">pts</span>
                         </div>
                       </div>
                     )}

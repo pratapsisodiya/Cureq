@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { apiRequest } from '../../../src/utils/api';
-import { Activity, User, Phone, FileText, Calendar, Download, Printer, Clock, ChevronRight, ArrowLeft, Heart, Sparkles, LogOut, CheckCircle } from 'lucide-react';
+import { Activity, User, Phone, FileText, Calendar, Download, Printer, Clock, ChevronRight, ArrowLeft, Heart, Sparkles, LogOut, CheckCircle, X } from 'lucide-react';
 import Link from 'next/link';
 
 export default function PatientPortal() {
@@ -30,6 +30,16 @@ export default function PatientPortal() {
       setError(err.message || 'No medical records found for this phone number.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCancelAppointment = async (apptId: string, date: string) => {
+    if (!confirm(`Cancel your appointment on ${date}? This cannot be undone.`)) return;
+    try {
+      await apiRequest(`/appointments/${apptId}/cancel`, { method: 'PATCH' });
+      setAppointments(prev => prev.filter(a => a.id !== apptId));
+    } catch (err: any) {
+      setError(err.message || 'Failed to cancel appointment. Please try again.');
     }
   };
 
@@ -134,7 +144,14 @@ export default function PatientPortal() {
         ) : (
           /* Patient Dashboard */
           <div className="space-y-8 animate-in fade-in duration-300">
-            
+
+            {error && (
+              <div className="p-3 bg-red-50 text-red-600 text-xs rounded-md border border-red-200 font-medium flex items-center gap-2">
+                <X className="h-4 w-4 shrink-0" /> {error}
+                <button onClick={() => setError('')} className="ml-auto text-red-400 hover:text-red-600 cursor-pointer">Dismiss</button>
+              </div>
+            )}
+
             {/* Patient Header Card */}
             <div className="bg-white border border-[#e9e9e7] rounded-2xl p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-4">
@@ -201,8 +218,18 @@ export default function PatientPortal() {
                             </span>
                           </div>
                           <div className="flex items-center justify-between text-xs text-[#64748b] pt-1.5 border-t border-[#e9e9e7] border-dashed">
-                            <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-[#01696f]" /> {appt.date}</span>
-                            <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-amber-500" /> {appt.timeSlot}</span>
+                            <div className="flex items-center gap-3">
+                              <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-[#01696f]" /> {appt.date}</span>
+                              <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5 text-amber-500" /> {appt.timeSlot}</span>
+                            </div>
+                            {appt.status === 'BOOKED' && (
+                              <button
+                                onClick={() => handleCancelAppointment(appt.id, appt.date)}
+                                className="flex items-center gap-1 text-[9px] font-bold text-red-500 border border-red-200 bg-white hover:bg-red-50 px-2 py-1 rounded-md transition-colors cursor-pointer"
+                              >
+                                <X className="h-3 w-3" /> Cancel
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}

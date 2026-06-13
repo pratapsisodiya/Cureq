@@ -7,7 +7,10 @@ import { authenticateToken, AuthRequest } from '../../shared/middleware/auth.mid
 const router = Router();
 const prisma = new PrismaClient();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'cureq_super_secret_jwt_key_123!';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('[CureQ] JWT_SECRET environment variable is required but not set.');
+}
 
 // Helper to sign token
 const generateToken = (user: any) => {

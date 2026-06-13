@@ -98,6 +98,12 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Missing required appointment parameters.' });
   }
 
+  // Reject past dates
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (new Date(date) < today) {
+    return res.status(400).json({ error: 'Cannot book appointments in the past.' });
+  }
+
   try {
     // Check if slot is already taken
     const existing = await prisma.appointment.findUnique({
@@ -195,6 +201,80 @@ router.patch('/:id/cancel', async (req, res) => {
   } catch (err) {
     console.error('Cancel appointment error:', err);
     res.status(500).json({ error: 'Server error cancelling appointment.' });
+  }
+});
+
+/**
+ * @route   POST /api/appointments/:id/checkin
+ * @desc    Convert a booked appointment to an active queue token
+ */
+router.post('/:id/checkin', async (req, res) => {
+  try {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: req.params.id },
+      include: {
+        patient: { select: { id: true, name: true, phone: true } },
+        doctor: { include: { user: { select: { name: true } } } },
+      },
+    });
+
+    if (!appointment) return res.status(404).json({ error: 'Appointment not found.' });
+    if (appointment.status === 'CANCELLED') return res.status(400).json({ error: 'Cannot check in a cancelled appointment.' });
+    if (appointment.status === 'CHECKED_IN') return res.status(400).json({ error: 'This appointment is already checked in.' });
+
+    // Count today's tokens for this doctor to generate the next token number
+    const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+    const todayCount = await prisma.token.count({
+      where: { doctorId: appointment.doctorId, branchId: appointment.branchId, checkInTime: { gte: startOfDay } },
+    });
+
+    const prefix = appointment.doctor.user.name.slice(0, 2).toUpperCase();
+    const tokenNo = `${prefix}-${String(todayCount + 1).padStart(3, '0')}`;
+
+    const waitingCount = await prisma.token.count({
+      where: { branchId: appointment.branchId, doctorId: appointment.doctorId, status: 'WAITING' },
+    });
+
+    const branchData = await prisma.branch.findUnique({ where: { id: appointment.branchId }, select: { waitingSeats: true } });
+    const seatedCount = await prisma.token.count({
+      where: { branchId: appointment.branchId, status: 'WAITING', seatStatus: 'SEATED' },
+    });
+    const seatStatus = seatedCount < (branchData?.waitingSeats || 10) ? 'SEATED' : 'WAITING_OUTSIDE';
+
+    const [token] = await prisma.$transaction([
+      prisma.token.create({
+        data: {
+          tokenNo,
+          queueOrder: waitingCount + 1,
+          type: 'GENERAL',
+          visitType: appointment.type,
+          status: 'WAITING',
+          patientId: appointment.patientId,
+          patientName: appointment.patient.name,
+          patientPhone: appointment.patient.phone || '',
+          doctorId: appointment.doctorId,
+          branchId: appointment.branchId,
+          appointmentId: appointment.id,
+          estimatedWait: (waitingCount + 1) * 15,
+          seatStatus,
+        },
+      }),
+      prisma.appointment.update({
+        where: { id: appointment.id },
+        data: { status: 'CHECKED_IN' },
+      }),
+    ]);
+
+    const io = req.app.get('io');
+    if (io) {
+      const { recalculateQueueETAs } = require('../queue/queue.routes');
+      await recalculateQueueETAs(appointment.branchId, appointment.doctorId, io);
+    }
+
+    res.status(201).json({ message: 'Patient checked in and added to queue.', token });
+  } catch (err: any) {
+    console.error('Appointment checkin error:', err);
+    res.status(500).json({ error: 'Server error during appointment check-in.' });
   }
 });
 

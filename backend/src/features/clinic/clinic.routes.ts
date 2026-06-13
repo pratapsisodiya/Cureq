@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { authenticateToken, requireRole } from '../../shared/middleware/auth.middleware';
+import { authenticateToken, requireRole, requirePermission } from '../../shared/middleware/auth.middleware';
+import { Permission } from '../../shared/config/permissions';
 import { createAuditLog } from '../clinic-features/clinic-features.routes';
 
 const router = Router();
@@ -114,7 +115,7 @@ router.get('/:id', async (req, res) => {
  * @route   POST /api/clinics/:id/branches
  * @desc    Create a new Branch in a Clinic (gated by SaaS plans)
  */
-router.post('/:id/branches', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+router.post('/:id/branches', authenticateToken, requirePermission(Permission.MANAGE_CLINIC), async (req, res) => {
   const { name, address, phone } = req.body;
   const clinicId = req.params.id;
 
@@ -157,7 +158,7 @@ router.post('/:id/branches', authenticateToken, requireRole(['CLINIC_ADMIN']), a
  * @route   PUT /api/clinics/:id/profile
  * @desc    Update clinic name and speciality
  */
-router.put('/:id/profile', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+router.put('/:id/profile', authenticateToken, requirePermission(Permission.MANAGE_CLINIC), async (req, res) => {
   const { name, speciality } = req.body;
   const clinicId = req.params.id;
 
@@ -187,7 +188,7 @@ router.put('/:id/profile', authenticateToken, requireRole(['CLINIC_ADMIN']), asy
  * @route   PUT /api/clinics/:id/plan
  * @desc    Upgrade / Modify Clinic Billing Plan (Mock checkout gateway)
  */
-router.put('/:id/plan', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+router.put('/:id/plan', authenticateToken, requirePermission(Permission.MANAGE_CLINIC), async (req, res) => {
   const { plan } = req.body; // FREE, STARTER, PRO, CHAIN
   const clinicId = req.params.id;
 
@@ -217,7 +218,7 @@ router.put('/:id/plan', authenticateToken, requireRole(['CLINIC_ADMIN']), async 
  * @route   PUT /api/clinics/:id/branches/:branchId/seats
  * @desc    Update waiting room seats capacity (waitingSeats)
  */
-router.put('/:id/branches/:branchId/seats', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+router.put('/:id/branches/:branchId/seats', authenticateToken, requirePermission(Permission.MANAGE_CLINIC), async (req, res) => {
   const { waitingSeats } = req.body;
   const { id: clinicId, branchId } = req.params;
 
@@ -253,7 +254,7 @@ router.put('/:id/branches/:branchId/seats', authenticateToken, requireRole(['CLI
  * @route   POST /api/clinics/:id/doctors
  * @desc    Add a new doctor to the clinic (creates User + DoctorProfile + DoctorSchedule)
  */
-router.post('/:id/doctors', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+router.post('/:id/doctors', authenticateToken, requirePermission(Permission.MANAGE_CLINIC), async (req, res) => {
   const { name, email, password, phone, speciality, branchId, schedules } = req.body;
   const clinicId = req.params.id;
 
@@ -321,10 +322,48 @@ router.post('/:id/doctors', authenticateToken, requireRole(['CLINIC_ADMIN']), as
 });
 
 /**
+ * @route   DELETE /api/clinics/:id/doctors/:doctorId
+ * @desc    Remove a doctor from the clinic (deletes all their schedules for this clinic's branches)
+ */
+router.delete('/:id/doctors/:doctorId', authenticateToken, requirePermission(Permission.MANAGE_CLINIC), async (req, res) => {
+  const clinicId = req.params.id;
+  const { doctorId } = req.params;
+
+  try {
+    const clinic = await prisma.clinic.findUnique({
+      where: { id: clinicId },
+      include: { branches: { select: { id: true } } }
+    });
+    if (!clinic || clinic.adminId !== (req as any).user.id) {
+      return res.status(403).json({ error: 'Forbidden.' });
+    }
+
+    const branchIds = clinic.branches.map(b => b.id);
+
+    // Delete all schedules for this doctor across all clinic branches
+    await prisma.doctorSchedule.deleteMany({
+      where: { doctorId, branchId: { in: branchIds } }
+    });
+
+    const doctorProfile = await prisma.doctorProfile.findUnique({
+      where: { id: doctorId },
+      include: { user: { select: { name: true } } }
+    });
+
+    await createAuditLog(clinicId, 'DOCTOR_REMOVED', `Dr. ${doctorProfile?.user?.name || doctorId} removed from clinic`);
+
+    res.json({ message: 'Doctor removed from clinic successfully.' });
+  } catch (err: any) {
+    console.error('Remove doctor error:', err);
+    res.status(500).json({ error: 'Server error removing doctor.' });
+  }
+});
+
+/**
  * @route   PUT /api/clinics/:id/doctors/:doctorId/schedule
  * @desc    Upsert doctor schedule for a branch
  */
-router.put('/:id/doctors/:doctorId/schedule', authenticateToken, requireRole(['CLINIC_ADMIN']), async (req, res) => {
+router.put('/:id/doctors/:doctorId/schedule', authenticateToken, requirePermission(Permission.MANAGE_CLINIC), async (req, res) => {
   const { branchId, schedules } = req.body;
   const clinicId = req.params.id;
   const { doctorId } = req.params;

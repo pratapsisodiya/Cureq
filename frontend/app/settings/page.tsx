@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../src/utils/api';
 import {
   Settings, MapPin, CreditCard, CheckCircle2, AlertTriangle,
-  Building, UserCheck, Plus, Sparkles, Calendar, Activity
+  Building, UserCheck, Plus, Sparkles, Calendar, Activity, Megaphone
 } from 'lucide-react';
 
 export default function ClinicSettings() {
@@ -34,6 +34,10 @@ export default function ClinicSettings() {
   const [newHolidayReason, setNewHolidayReason] = useState('');
   const [isAddingHoliday, setIsAddingHoliday] = useState(false);
 
+  // TV Announcements
+  const [announcementMessages, setAnnouncementMessages] = useState<string[]>(['', '', '', '', '']);
+  const [isSavingAnnouncements, setIsSavingAnnouncements] = useState(false);
+
   // Audit log
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
@@ -48,6 +52,8 @@ export default function ClinicSettings() {
       setEditAddress(res.clinic.branches?.[0]?.address || '');
       setEditSpeciality(res.clinic.speciality || '');
       setLoading(false);
+      const branchId = res.clinic.branches?.[0]?.id;
+      if (branchId) fetchAnnouncements(branchId);
     } catch (err) {
       console.error(err);
       setLoading(false);
@@ -59,6 +65,35 @@ export default function ClinicSettings() {
       const res = await apiRequest(`/features/clinics/${cId}/holidays`);
       setHolidays(res.holidays || []);
     } catch { /* ignore */ }
+  };
+
+  const fetchAnnouncements = async (branchId: string) => {
+    try {
+      const res = await apiRequest(`/notifications/${branchId}/announcements`);
+      if (res.announcements && res.announcements.length > 0) {
+        const msgs = [...res.announcements];
+        while (msgs.length < 5) msgs.push('');
+        setAnnouncementMessages(msgs.slice(0, 5));
+      }
+    } catch { /* use defaults */ }
+  };
+
+  const handleSaveAnnouncements = async () => {
+    const branchId = clinicData?.branches?.[0]?.id;
+    if (!branchId) return;
+    setIsSavingAnnouncements(true);
+    try {
+      const messages = announcementMessages.filter(m => m.trim());
+      await apiRequest(`/notifications/${branchId}/announcements`, {
+        method: 'POST',
+        body: JSON.stringify({ messages }),
+      });
+      setSuccessMsg('TV announcements saved successfully!');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to save announcements.');
+    } finally {
+      setIsSavingAnnouncements(false);
+    }
   };
 
   const fetchAuditLogs = async () => {
@@ -323,6 +358,7 @@ export default function ClinicSettings() {
                     {h.reason && <span className="text-[10px] text-gray-400 ml-2">{h.reason}</span>}
                   </div>
                   <button onClick={async () => {
+                    if (!confirm(`Remove holiday on ${h.date}?`)) return;
                     await apiRequest(`/features/clinics/${clinicId}/holidays/${h.date}`, { method: 'DELETE' });
                     setHolidays(prev => prev.filter(x => x.id !== h.id));
                   }} className="text-[10px] text-red-400 hover:text-red-300 cursor-pointer">Remove</button>
@@ -349,6 +385,43 @@ export default function ClinicSettings() {
                 {isAddingHoliday ? '...' : 'Add'}
               </button>
             </div>
+          </div>
+
+          {/* TV Announcements */}
+          <div className="bg-[#111e20] border border-[#1c2e31] p-6 rounded-[6px] space-y-4">
+            <h3 className="text-xs font-semibold uppercase text-gray-400 tracking-wider flex items-center gap-1.5 border-b border-[#1c2e31] pb-2 text-[#01696f]">
+              <Megaphone className="h-4 w-4" /> Waiting Room TV Announcements
+            </h3>
+            <p className="text-[10px] text-gray-400 font-light">
+              Custom ticker messages shown on the TV display. Up to 5 messages, rotating every 8 seconds.
+              Leave blank to use the default CureQ messages.
+            </p>
+            <div className="space-y-2">
+              {announcementMessages.map((msg, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <span className="text-[9px] text-gray-500 font-bold w-4 shrink-0">{idx + 1}.</span>
+                  <input
+                    type="text"
+                    placeholder={`Announcement ${idx + 1} (optional)`}
+                    maxLength={160}
+                    value={msg}
+                    onChange={e => {
+                      const updated = [...announcementMessages];
+                      updated[idx] = e.target.value;
+                      setAnnouncementMessages(updated);
+                    }}
+                    className="flex-1 px-2 py-1.5 border border-[#1c2e31] rounded-[4px] bg-[#0d1516] text-xs text-gray-100 focus:outline-none focus:border-[#01696f] placeholder:text-gray-600"
+                  />
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={handleSaveAnnouncements}
+              disabled={isSavingAnnouncements}
+              className="px-4 py-2 bg-[#01696f] hover:bg-[#005459] text-white text-xs font-semibold rounded-[4px] disabled:opacity-50 transition-all cursor-pointer"
+            >
+              {isSavingAnnouncements ? 'Saving...' : 'Save Announcements'}
+            </button>
           </div>
 
           {/* Audit Log */}

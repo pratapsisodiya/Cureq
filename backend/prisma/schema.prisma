@@ -95,12 +95,13 @@ model Clinic {
 }
 
 model Branch {
-  id          String           @id @default(uuid())
-  name        String
-  address     String
-  phone       String
-  waitingSeats Int             @default(10)
-  clinicId    String
+  id            String           @id @default(uuid())
+  name          String
+  address       String
+  phone         String
+  waitingSeats  Int              @default(10)
+  announcements Json?            // Custom TV ticker messages string[]
+  clinicId      String
   clinic      Clinic           @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   schedules   DoctorSchedule[]
   tokens      Token[]
@@ -117,6 +118,7 @@ model DoctorProfile {
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   speciality   String
   bio          String?
+  delayBuffer  Int              @default(0)
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
   
@@ -156,8 +158,11 @@ model Token {
   type           TokenType   @default(GENERAL)
   visitType      VisitType   @default(NEW)
   status         TokenStatus @default(WAITING)
-  chiefComplaint String?
-  notes          String?     // Quick consultation notes
+  chiefComplaint  String?
+  triageUrgency   String?
+  triageReasoning String?
+  triageSymptoms  String?
+  notes           String?     // Quick consultation notes
   estimatedWait  Int         // ETA in minutes
   checkInTime    DateTime    @default(now())
   startTime      DateTime?
@@ -182,6 +187,10 @@ model Token {
 
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
+
+  @@index([branchId, doctorId])
+  @@index([branchId, doctorId, status])
+  @@index([createdAt])
 }
 
 model Appointment {
