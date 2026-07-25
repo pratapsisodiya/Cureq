@@ -280,6 +280,46 @@ export default function PatientQueueTracker({ params }: { params: Promise<Tracke
           </div>
         </div>
 
+        {/* Nudge Counter Banner */}
+        {tokenData.nudgeCount > 0 && tokenData.status === 'WAITING' && (
+          <div className="bg-amber-950/30 border border-amber-800/60 p-3 rounded-[4px] flex items-center justify-between text-xs text-amber-300">
+            <div className="flex items-center gap-2">
+              <Bell className="h-4 w-4 text-amber-400 shrink-0 animate-bounce" />
+              <span>Nudge Reminder ({tokenData.nudgeCount}/3 Strikes) — Please be near the waiting room!</span>
+            </div>
+          </div>
+        )}
+
+        {/* Share Live Queue Link via WhatsApp */}
+        <div className="bg-[#0d1516] p-3 rounded-[4px] border border-[#1c2e31] flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-gray-300 overflow-hidden">
+            <Share2 className="h-4 w-4 text-[#01696f] shrink-0" />
+            <span className="truncate text-[11px]">Share live tracking link</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => {
+                const url = window.location.href;
+                navigator.clipboard.writeText(url);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 3000);
+              }}
+              className="px-2.5 py-1 bg-[#1c2e31] hover:bg-[#253d41] text-gray-200 text-[10px] font-semibold rounded flex items-center gap-1 transition-colors"
+            >
+              {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+              {copied ? 'Copied!' : 'Copy Link'}
+            </button>
+            <a
+              href={`https://wa.me/?text=${encodeURIComponent(`📍 Tracking my queue status live (Token ${tokenData.tokenNo}): ${typeof window !== 'undefined' ? window.location.href : ''}`)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white text-[10px] font-bold rounded flex items-center gap-1 transition-colors"
+            >
+              WhatsApp
+            </a>
+          </div>
+        </div>
+
         {/* Visual Queue Progress Bar */}
         {tokenData.status === 'WAITING' && patientsAhead <= 10 && (
           <div className="space-y-1.5">

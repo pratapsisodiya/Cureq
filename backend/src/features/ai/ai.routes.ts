@@ -131,17 +131,21 @@ router.post('/generate-prescription', authenticateToken, async (req, res) => {
 });
 
 /**
- * @route   GET /api/ai/complaint-patterns/:clinicId
- * @desc    Detect symptom clusters and potential outbreak patterns from today's visits
+ * @route   POST /api/ai/check-drug-interactions
+ * @desc    Check a list of prescribed medications for drug-drug interactions
  */
-router.get('/complaint-patterns/:clinicId', authenticateToken, async (req, res) => {
-  const { clinicId } = req.params;
+router.post('/check-drug-interactions', authenticateToken, async (req, res) => {
+  const { medications } = req.body;
+  if (!Array.isArray(medications)) {
+    return res.status(400).json({ error: 'medications must be an array of drug names.' });
+  }
+
   try {
-    const result = await aiService.detectComplaintPatterns(clinicId);
+    const result = await aiService.checkDrugInteractions(medications);
     res.json(result);
   } catch (err) {
-    console.error('Complaint patterns error:', err);
-    res.status(500).json({ error: 'Pattern detection failed.' });
+    console.error('Drug interaction check error:', err);
+    res.status(500).json({ error: 'Failed to check drug interactions.' });
   }
 });
 

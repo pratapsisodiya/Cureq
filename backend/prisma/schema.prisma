@@ -184,6 +184,10 @@ model Token {
   
   seatStatus     SeatStatus  @default(SEATED)
   consultationFee Float?   // Fee charged for this consultation
+  nudgeCount     Int         @default(0)  // Number of "2 slots away" nudges sent
+  lastNudgedAt   DateTime?               // Timestamp of last nudge sent
+
+  prescriptions  Prescription[]          @relation("TokenPrescriptions")
 
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
@@ -372,4 +376,98 @@ model WaitlistEntry {
   chiefComplaint String?
   status         String        @default("PENDING")
   createdAt      DateTime      @default(now())
+}
+
+enum PrescriptionStatus {
+  DRAFT
+  SENT
+  DISPENSED
+}
+
+enum LabOrderStatus {
+  PENDING
+  SAMPLE_COLLECTED
+  PROCESSING
+  REPORT_READY
+  COMPLETED
+}
+
+enum PharmacyOrderStatus {
+  PENDING
+  PROCESSING
+  READY
+  DISPENSED
+}
+
+model Prescription {
+  id              String             @id @default(uuid())
+  tokenId         String
+  token           Token              @relation("TokenPrescriptions", fields: [tokenId], references: [id], onDelete: Cascade)
+  visitLogId      String?            // Linked after consultation completes
+  patientId       String?
+  patientName     String
+  patientPhone    String
+  patientAge      Int?
+  patientGender   String?
+  doctorId        String
+  doctorName      String
+  branchId        String
+  clinicName      String?
+  medications     Json               // [{name, dosage, frequency, duration, route, instructions}]
+  interactions    Json               @default("[]")
+  generalAdvice   String?
+  reviewRequired  Boolean            @default(false)
+  qrCode          String?            // Base64 QR code image or data URL
+  qrData          String?            // The URL encoded in the QR code
+  status          PrescriptionStatus @default(DRAFT)
+  whatsappSentAt  DateTime?
+
+  pharmacyOrders  PharmacyOrder[]    @relation("PrescriptionPharmacy")
+  labOrders       LabOrder[]         @relation("PrescriptionLab")
+
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([tokenId])
+  @@index([patientId])
+  @@index([branchId])
+}
+
+model PharmacyOrder {
+  id             String               @id @default(uuid())
+  prescriptionId String
+  prescription   Prescription         @relation("PrescriptionPharmacy", fields: [prescriptionId], references: [id], onDelete: Cascade)
+  branchId       String
+  patientName    String
+  patientPhone   String
+  tokenNo        String?
+  items          Json                 // [{name, dosage, frequency, duration, qty}]
+  specialNotes   String?
+  status         PharmacyOrderStatus  @default(PENDING)
+  dispensedAt    DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  @@index([branchId, status])
+  @@index([createdAt])
+}
+
+model LabOrder {
+  id             String         @id @default(uuid())
+  prescriptionId String
+  prescription   Prescription   @relation("PrescriptionLab", fields: [prescriptionId], references: [id], onDelete: Cascade)
+  branchId       String
+  patientName    String
+  patientPhone   String
+  tokenNo        String?
+  tests          Json           // [{testName, instructions, urgency}]
+  specialNotes   String?
+  priority       String         @default("NORMAL")  // NORMAL | URGENT
+  status         LabOrderStatus @default(PENDING)
+  reportReadyAt  DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([branchId, status])
+  @@index([createdAt])
 }

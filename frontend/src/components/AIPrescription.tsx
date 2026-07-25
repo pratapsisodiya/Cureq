@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Pill, AlertTriangle, Printer, ChevronDown, ChevronUp, Loader2, FileText } from 'lucide-react';
+import { Pill, AlertTriangle, Printer, ChevronDown, ChevronUp, Loader2, FileText, Send, Share2 } from 'lucide-react';
 import { apiRequest } from '../utils/api';
+import PrescriptionSaveModal from './PrescriptionSaveModal';
 
 interface PrescriptionDrug {
   name: string;
@@ -28,13 +29,32 @@ interface AIPrescriptionProps {
   doctorName?: string;
   clinicName?: string;
   className?: string;
+  tokenId?: string;
+  patientPhone?: string;
+  patientId?: string;
+  doctorId?: string;
+  branchId?: string;
 }
 
-export default function AIPrescription({ soapNotes, patientName, patientAge, patientGender, doctorName, clinicName, className }: AIPrescriptionProps) {
+export default function AIPrescription({
+  soapNotes,
+  patientName,
+  patientAge,
+  patientGender,
+  doctorName,
+  clinicName,
+  className,
+  tokenId,
+  patientPhone,
+  patientId,
+  doctorId,
+  branchId,
+}: AIPrescriptionProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [prescription, setPrescription] = useState<PrescriptionResult | null>(null);
   const [isExpanded, setIsExpanded] = useState(true);
   const [error, setError] = useState('');
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
 
   const handleGenerate = async () => {
     if (!soapNotes || soapNotes.trim().length < 5) {
@@ -134,6 +154,15 @@ export default function AIPrescription({ soapNotes, patientName, patientAge, pat
               </span>
             </div>
             <div className="flex items-center gap-2">
+              {tokenId && branchId && doctorId && (
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); setIsSaveModalOpen(true); }}
+                  className="flex items-center gap-1 text-[10px] bg-purple-700 hover:bg-purple-800 text-white font-bold px-2 py-0.5 rounded shadow-xs transition-colors"
+                >
+                  <Share2 className="h-3 w-3" /> Save & Share
+                </button>
+              )}
               <button type="button" onClick={e => { e.stopPropagation(); handlePrint(); }}
                 className="flex items-center gap-1 text-[10px] text-purple-600 hover:text-purple-800 font-semibold">
                 <Printer className="h-3 w-3" /> Print
@@ -187,6 +216,25 @@ export default function AIPrescription({ soapNotes, patientName, patientAge, pat
             </div>
           )}
         </div>
+      )}
+
+      {/* Save & Share Modal */}
+      {prescription && tokenId && branchId && doctorId && (
+        <PrescriptionSaveModal
+          isOpen={isSaveModalOpen}
+          onClose={() => setIsSaveModalOpen(false)}
+          prescriptionData={prescription}
+          patientName={patientName}
+          patientPhone={patientPhone || ''}
+          patientAge={patientAge}
+          patientGender={patientGender}
+          patientId={patientId}
+          doctorId={doctorId}
+          doctorName={doctorName || 'Doctor'}
+          branchId={branchId}
+          clinicName={clinicName}
+          tokenId={tokenId}
+        />
       )}
     </div>
   );

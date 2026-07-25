@@ -1067,6 +1067,12 @@ export default function DoctorConsole() {
                                 soapNotes={consultNotes}
                                 patientName={currentPatient.patientName}
                                 doctorName={doctorName}
+                                tokenId={currentPatient.id}
+                                patientPhone={currentPatient.patientPhone}
+                                patientId={currentPatient.patientId || undefined}
+                                doctorId={doctorId}
+                                branchId={branchId}
+                                clinicName={clinicName}
                               />
                               <AIFollowupMessage
                                 consultNotes={consultNotes}

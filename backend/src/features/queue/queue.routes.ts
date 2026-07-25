@@ -7,6 +7,7 @@ import { createAuditLog } from '../clinic-features/clinic-features.routes';
 
 const router = Router();
 const prisma = new PrismaClient();
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3001';
 
 // Helper to get speciality prefix
 const getSpecialityPrefix = (spec: string): string => {
@@ -23,23 +24,32 @@ const getSpecialityPrefix = (spec: string): string => {
 };
 
 // Helper to send simulated notifications (logs to console and DB log table)
+// Includes live tracker URL for WhatsApp messages
 async function sendNotification(
   branchId: string,
   phone: string,
   message: string,
-  channel: 'SMS' | 'WHATSAPP'
+  channel: 'SMS' | 'WHATSAPP',
+  tokenId?: string  // If provided, appends live tracker link to WhatsApp messages
 ) {
   try {
+    // Enrich WhatsApp messages with live tracker link
+    let enrichedMessage = message;
+    if (channel === 'WHATSAPP' && tokenId) {
+      const trackerUrl = `${FRONTEND_URL}/queue/${tokenId}`;
+      enrichedMessage = `${message}\n\n📍 Track your queue live: ${trackerUrl}`;
+    }
+
     await prisma.notificationLog.create({
       data: {
         branchId,
         phone,
-        message,
+        message: enrichedMessage,
         channel,
         status: 'SENT',
       },
     });
-    console.log(`[Notification - ${channel}] to ${phone}: "${message}"`);
+    console.log(`[Notification - ${channel}] to ${phone}: "${enrichedMessage}"`);
   } catch (err) {
     console.error('Failed to log simulated notification:', err);
   }
@@ -376,19 +386,20 @@ router.post('/:branchId/token', async (req, res) => {
       broadcastQueueUpdate(io, branchId, doctorId, activeQueue);
     }
 
-    // 7. Send notification logs
+    // 7. Send notification logs (WhatsApp includes live tracker link)
     const channel = plan === 'FREE' || plan === 'STARTER' ? 'SMS' : 'WHATSAPP';
     const patientsAhead = waitingCount;
     
     const notificationMsg = seatStatus === SeatStatus.SEATED
-      ? `You joined the queue! Token: ${tokenNo}. Doctor: ${doctorProfile.user.name}. Please proceed to the waiting area. A seat is allocated. ETA: ~${eta} mins.`
-      : `You joined the queue! Token: ${tokenNo}. Doctor: ${doctorProfile.user.name}. The waiting room is full. You are in the virtual queue. We will alert you when a seat is free. ETA: ~${eta} mins.`;
+      ? `✅ You joined the queue! Token: ${tokenNo}. Doctor: ${doctorProfile.user.name}. Please proceed to the waiting area. A seat is allocated. ETA: ~${eta} mins. You are #${patientsAhead + 1} in line.`
+      : `✅ You joined the queue! Token: ${tokenNo}. Doctor: ${doctorProfile.user.name}. Waiting room is full — you are in the virtual queue. We will alert you when a seat is free. ETA: ~${eta} mins. You are #${patientsAhead + 1} in line.`;
 
     await sendNotification(
       branchId,
       patientPhone,
       notificationMsg,
-      channel
+      channel,
+      token.id  // WhatsApp: appends live tracker link automatically
     );
 
     // Audit log
@@ -573,28 +584,78 @@ router.post('/:branchId/next', async (req, res) => {
       broadcastTokenUpdate(io, updatedNext.id, { status: 'IN_CONSULTATION', patientsAhead: 0, estimatedWait: 0, startTime: new Date().toISOString() });
     }
 
-    // 6. Send SMS/WhatsApp
+    // 6. Send SMS/WhatsApp to called patient with tracker link
     await sendNotification(
       branchId,
       updatedNext.patientPhone,
-      `Your token ${updatedNext.tokenNo} is called! Please proceed to Dr. ${nextToken.doctor.user.name}'s chamber now.`,
-      'WHATSAPP'
+      `🔔 Your token ${updatedNext.tokenNo} is called! Please proceed to Dr. ${nextToken.doctor.user.name}'s chamber now.`,
+      'WHATSAPP',
+      updatedNext.id
     );
 
-    // Notify the patient who is now 2 ahead
+    // ── Nudge the patient who is now 2 ahead ──────────────────────────────
     const twoAheadToken = await prisma.token.findFirst({
       where: { branchId, doctorId, status: 'WAITING' },
       orderBy: { queueOrder: 'asc' },
-      skip: 1, // index 1 is 2 ahead (the 1st waiting is 1 ahead)
+      skip: 1, // index 1 = 2nd in queue = 2 ahead
     });
 
     if (twoAheadToken) {
-      await sendNotification(
-        branchId,
-        twoAheadToken.patientPhone,
-        `Your turn is approaching! Token ${twoAheadToken.tokenNo} is 2 patients away. Please return to the clinic waiting area.`,
-        'SMS'
-      );
+      const newNudgeCount = (twoAheadToken.nudgeCount || 0) + 1;
+
+      if (newNudgeCount >= 3) {
+        // ── Auto-escalate: 3 unacknowledged nudges → mark NO_SHOW ──────────
+        await prisma.token.update({
+          where: { id: twoAheadToken.id },
+          data: { status: 'NO_SHOW', nudgeCount: newNudgeCount },
+        });
+
+        await sendNotification(
+          branchId,
+          twoAheadToken.patientPhone,
+          `⚠️ Token ${twoAheadToken.tokenNo}: You have been marked as No-Show after 3 unanswered nudges. Please visit the reception desk to re-join the queue.`,
+          'WHATSAPP',
+          twoAheadToken.id
+        );
+
+        // Broadcast NO_SHOW status to tracker page
+        if (io) {
+          broadcastTokenUpdate(io, twoAheadToken.id, { status: 'NO_SHOW', patientsAhead: 0 });
+        }
+
+        await recalculateQueueETAs(branchId, doctorId, io);
+        await promoteWaitingOutsidePatients(branchId, io);
+
+        const noShowBranch = await prisma.branch.findUnique({ where: { id: branchId }, select: { clinicId: true } });
+        if (noShowBranch) {
+          await createAuditLog(
+            noShowBranch.clinicId,
+            'TOKEN_AUTO_NOSHOW',
+            `Token ${twoAheadToken.tokenNo} auto-escalated to No-Show after 3 nudges — ${twoAheadToken.patientName}`
+          );
+        }
+      } else {
+        // ── Regular nudge: increment count and notify ─────────────────────
+        await prisma.token.update({
+          where: { id: twoAheadToken.id },
+          data: { nudgeCount: newNudgeCount, lastNudgedAt: new Date() },
+        });
+
+        await sendNotification(
+          branchId,
+          twoAheadToken.patientPhone,
+          `⏰ Heads up! You are 2 patients away from your turn (Token ${twoAheadToken.tokenNo}). Please head back to the clinic waiting area now. Nudge ${newNudgeCount}/3.`,
+          'WHATSAPP',
+          twoAheadToken.id
+        );
+
+        if (io) {
+          broadcastTokenUpdate(io, twoAheadToken.id, {
+            nudgeCount: newNudgeCount,
+            patientsAhead: 1,
+          });
+        }
+      }
     }
 
     res.json({ message: 'Next patient called successfully.', token: updatedNext });
@@ -648,6 +709,81 @@ router.post('/:branchId/recall', async (req, res) => {
     res.json({ message: 'Recall signal broadcasted.' });
   } catch (err) {
     res.status(500).json({ error: 'Server error recalling patient.' });
+  }
+});
+
+/**
+ * @route   POST /api/queues/:branchId/nudge/:tokenId
+ * @desc    Manually nudge a patient via WhatsApp with live tracking URL
+ */
+router.post('/:branchId/nudge/:tokenId', async (req, res) => {
+  const { branchId, tokenId } = req.params;
+
+  try {
+    const token = await prisma.token.findUnique({
+      where: { id: tokenId },
+      include: { doctor: { include: { user: true } } },
+    });
+
+    if (!token) {
+      return res.status(404).json({ error: 'Token not found.' });
+    }
+
+    const newNudgeCount = (token.nudgeCount || 0) + 1;
+
+    let autoEscalated = false;
+
+    if (newNudgeCount >= 3) {
+      // Auto-escalate to NO_SHOW after 3 unacknowledged nudges
+      await prisma.token.update({
+        where: { id: tokenId },
+        data: { status: 'NO_SHOW', nudgeCount: newNudgeCount, lastNudgedAt: new Date() },
+      });
+
+      await sendNotification(
+        branchId,
+        token.patientPhone,
+        `⚠️ Token ${token.tokenNo}: You have been marked as No-Show after 3 unanswered nudges. Please visit the reception desk to re-join the queue.`,
+        'WHATSAPP',
+        token.id
+      );
+
+      autoEscalated = true;
+      const io = req.app.get('io');
+      if (io) {
+        broadcastTokenUpdate(io, token.id, { status: 'NO_SHOW', patientsAhead: 0 });
+      }
+
+      await recalculateQueueETAs(branchId, token.doctorId, io);
+      await promoteWaitingOutsidePatients(branchId, io);
+    } else {
+      await prisma.token.update({
+        where: { id: tokenId },
+        data: { nudgeCount: newNudgeCount, lastNudgedAt: new Date() },
+      });
+
+      await sendNotification(
+        branchId,
+        token.patientPhone,
+        `⏰ Reminder: Token ${token.tokenNo} for Dr. ${token.doctor.user.name}. Please proceed towards the waiting area. (Nudge ${newNudgeCount}/3)`,
+        'WHATSAPP',
+        token.id
+      );
+
+      const io = req.app.get('io');
+      if (io) {
+        broadcastTokenUpdate(io, token.id, { nudgeCount: newNudgeCount });
+      }
+    }
+
+    res.json({
+      message: autoEscalated ? 'Patient nudged (3 strikes - marked No-Show)' : `Nudge ${newNudgeCount}/3 sent to patient via WhatsApp.`,
+      nudgeCount: newNudgeCount,
+      autoEscalated,
+    });
+  } catch (err) {
+    console.error('Manual nudge error:', err);
+    res.status(500).json({ error: 'Failed to send nudge notification.' });
   }
 });
 

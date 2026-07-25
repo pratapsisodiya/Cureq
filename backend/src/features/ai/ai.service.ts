@@ -790,6 +790,62 @@ Rules:
       };
     }
   }
+
+  /**
+   * Real-time drug interaction checker for a list of prescribed medications
+   */
+  async checkDrugInteractions(medications: string[]): Promise<{ hasInteractions: boolean; warnings: string[] }> {
+    if (!medications || medications.length < 2) {
+      return { hasInteractions: false, warnings: [] };
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      // Heuristic fallback for common interactions
+      const lower = medications.map(m => m.toLowerCase());
+      const warnings: string[] = [];
+
+      if (lower.some(m => m.includes('aspirin')) && lower.some(m => m.includes('ibuprofen') || m.includes('warfarin'))) {
+        warnings.push('Aspirin + NSAID/Anticoagulant: Increased risk of gastrointestinal bleeding.');
+      }
+      if (lower.some(m => m.includes('sildenafil')) && lower.some(m => m.includes('nitrate') || m.includes('nitroglycerin'))) {
+        warnings.push('Sildenafil + Nitrates: Severe, potentially fatal hypotension.');
+      }
+      if (lower.some(m => m.includes('ciprofloxacin')) && lower.some(m => m.includes('antacid') || m.includes('calcium'))) {
+        warnings.push('Ciprofloxacin + Antacids: Reduced antibiotic absorption.');
+      }
+
+      return { hasInteractions: warnings.length > 0, warnings };
+    }
+
+    try {
+      const prompt = `You are a clinical pharmacologist. Check these medications for drug-drug interactions:
+Medications: ${medications.join(', ')}
+
+Respond ONLY with JSON:
+{
+  "hasInteractions": true or false,
+  "warnings": ["warning string 1", "warning string 2"]
+}`;
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+        }),
+      });
+
+      const result = await response.json();
+      const text = result.choices?.[0]?.message?.content || '{}';
+      return JSON.parse(text.replace(/```json|```/g, '').trim());
+    } catch (err) {
+      console.error('Drug interaction check failed:', err);
+      return { hasInteractions: false, warnings: [] };
+    }
+  }
 }
 
 export const aiService = new AIService();

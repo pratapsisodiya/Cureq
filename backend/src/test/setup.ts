@@ -53,6 +53,24 @@ vi.mock('@prisma/client', () => {
       SMS: 'SMS',
       WHATSAPP: 'WHATSAPP',
     },
+    PrescriptionStatus: {
+      DRAFT: 'DRAFT',
+      SENT: 'SENT',
+      DISPENSED: 'DISPENSED',
+    },
+    PharmacyOrderStatus: {
+      PENDING: 'PENDING',
+      PROCESSING: 'PROCESSING',
+      READY: 'READY',
+      DISPENSED: 'DISPENSED',
+    },
+    LabOrderStatus: {
+      PENDING: 'PENDING',
+      SAMPLE_COLLECTED: 'SAMPLE_COLLECTED',
+      PROCESSING: 'PROCESSING',
+      REPORT_READY: 'REPORT_READY',
+      COMPLETED: 'COMPLETED',
+    },
   };
 });
 

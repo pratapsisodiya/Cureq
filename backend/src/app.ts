@@ -22,6 +22,7 @@ import featuresRouter from './features/clinic-features/clinic-features.routes';
 import aiRouter from './features/ai/ai.routes';
 import billingRouter from './features/billing/billing.routes';
 import chatbotRouter from './features/chatbot/chatbot.routes';
+import prescriptionRouter from './features/prescription/prescription.routes';
 
 // Socket setup
 import { setupQueueSockets } from './features/queue/queue.socket';
@@ -77,6 +78,7 @@ app.use('/api/features', featuresRouter);
 app.use('/api/ai', aiRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api/chatbot', chatbotRouter);
+app.use('/api/prescriptions', prescriptionRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

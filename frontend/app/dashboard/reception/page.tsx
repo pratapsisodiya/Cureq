@@ -1410,12 +1410,34 @@ export default function ReceptionDashboard() {
                                 className="w-20 px-2 py-1 text-xs border border-[#e9e9e7] rounded focus:outline-none focus:border-[#01696f] bg-white"
                               />
                             </td>
-                            <td className="px-5 py-4 text-right">
-                              <div className="flex justify-end gap-2">
-                                <button onClick={() => { setPrintToken(token); setTimeout(() => window.print(), 200); }} className="p-1.5 border border-[#e9e9e7] bg-white rounded shadow-xs hover:bg-[#f4f4f3] text-[#1a202c]" title="Print Slip"><Printer className="h-3.5 w-3.5" /></button>
-                                <button onClick={() => recallToken(branchId, token.tokenNo, 'Doctor')} className="px-2 py-1.5 bg-white hover:bg-[#f4f4f3] border border-[#e9e9e7] rounded text-[10px] font-bold text-[#1a202c] shadow-xs">Re-call TV</button>
-                              </div>
-                            </td>
+                             <td className="px-5 py-4 text-right">
+                               <div className="flex justify-end gap-2">
+                                 <button
+                                   onClick={async () => {
+                                     try {
+                                       const res = await apiRequest(`/queues/${branchId}/nudge/${token.id}`, { method: 'POST' });
+                                       showToast(res.message, res.autoEscalated ? 'error' : 'success');
+                                       fetchQueue(branchId, selectedDoctorId);
+                                     } catch (err: any) {
+                                       showToast(err.message || 'Failed to nudge patient.', 'error');
+                                     }
+                                   }}
+                                   className={`px-2 py-1.5 rounded text-[10px] font-bold shadow-xs flex items-center gap-1 cursor-pointer transition-colors ${
+                                     (token.nudgeCount || 0) >= 2
+                                       ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+                                       : (token.nudgeCount || 0) === 1
+                                         ? 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100'
+                                         : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                   }`}
+                                   title="Send WhatsApp Nudge with Live Queue Tracker link"
+                                 >
+                                   <MessageCircle className="h-3 w-3" />
+                                   Nudge {token.nudgeCount ? `(${token.nudgeCount}/3)` : ''}
+                                 </button>
+                                 <button onClick={() => { setPrintToken(token); setTimeout(() => window.print(), 200); }} className="p-1.5 border border-[#e9e9e7] bg-white rounded shadow-xs hover:bg-[#f4f4f3] text-[#1a202c]" title="Print Slip"><Printer className="h-3.5 w-3.5" /></button>
+                                 <button onClick={() => recallToken(branchId, token.tokenNo, 'Doctor')} className="px-2 py-1.5 bg-white hover:bg-[#f4f4f3] border border-[#e9e9e7] rounded text-[10px] font-bold text-[#1a202c] shadow-xs">Re-call TV</button>
+                               </div>
+                             </td>
                           </tr>
                         ))}
                       </tbody>
